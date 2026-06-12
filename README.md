@@ -35,6 +35,10 @@ npm run dev
 
 `MONGODB_URI`, DB 비밀번호, secret key, `.dev.vars`, `.env` 파일은 절대 GitHub에 커밋하지 않습니다. `.gitignore`가 이 파일들을 제외하도록 설정되어 있습니다.
 
+## 연결 진단
+
+배포 후 앱 상단의 `진단` 버튼을 누르거나 `/api/health`를 직접 열면 MongoDB Atlas ping 결과를 확인할 수 있습니다. `MONGODB_URI is not configured`가 나오면 Cloudflare Pages 환경변수가 빠진 것이고, `querySrv`, `authentication failed`, `timed out` 계열 오류가 나오면 URI 형식, 계정/비밀번호, Atlas Network Access 설정을 확인해야 합니다.
+
 ## 주의
 
 지원금, 휴가·휴직, 보건소 사업, 성남시 지원 항목은 정책 변경 가능성이 있습니다. 실제 신청 전에는 복지로, 고용24, 성남시 또는 관할 보건소의 최신 공지를 확인해야 합니다.

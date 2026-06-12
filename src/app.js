@@ -3,6 +3,7 @@ const FAMILY_ID = "main";
 const BACKUP_STORE_KEY = "mommyflow-integrated-v1";
 const LOAD_ENDPOINT = "/api/load";
 const SAVE_ENDPOINT = "/api/save";
+const HEALTH_ENDPOINT = "/api/health";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const VIEWS = [
   ["timeline", "calendar-days", "주차별 타임라인", "1~40주 태아·산모 변화"],
@@ -129,7 +130,7 @@ async function loadRemoteState(options={}){
   }catch(e){
     initialCloudLoadDone = true;
     if(!changedBeforeCloudLoad) state = loadBackupState();
-    syncStatus = {...syncStatus, loading:false, source:"backup", error:"MongoDB를 불러오지 못해 이 기기의 백업을 사용 중입니다."};
+    syncStatus = {...syncStatus, loading:false, source:"backup", error:`MongoDB 불러오기 실패: ${e.message || "원인 미상"}`};
     render();
   }
 }
@@ -158,7 +159,7 @@ async function flushRemoteSave(){
     if(!response.ok || payload.ok === false) throw new Error(payload.error || "save failed");
     syncStatus = {...syncStatus, saving:false, source:"cloud", error:"", lastSavedAt:payload.updatedAt || new Date().toISOString()};
   }catch(e){
-    syncStatus = {...syncStatus, saving:false, source:"backup", error:"MongoDB 저장 실패. 이 기기의 백업만 갱신되었습니다."};
+    syncStatus = {...syncStatus, saving:false, source:"backup", error:`MongoDB 저장 실패: ${e.message || "원인 미상"}`};
   }finally{
     saveInFlight = false;
     updateSyncIndicator();
@@ -180,6 +181,27 @@ function syncDetail(){
   if(syncStatus.saving) return "변경사항을 /api/save로 저장 중";
   if(syncStatus.lastSavedAt) return `마지막 저장: ${new Date(syncStatus.lastSavedAt).toLocaleString("ko-KR")}`;
   return "familyId main 공유 상태";
+}
+async function runHealthCheck(){
+  syncStatus = {...syncStatus, loading:true, error:""};
+  updateSyncIndicator();
+  try{
+    const response = await fetch(HEALTH_ENDPOINT, {
+      method:"GET",
+      headers:{ "accept":"application/json" },
+      cache:"no-store",
+    });
+    const payload = await response.json().catch(()=>({}));
+    if(!response.ok || payload.ok === false) throw new Error(payload.error || "health check failed");
+    syncStatus = {...syncStatus, loading:false, source:"cloud", error:"", lastSavedAt:new Date().toISOString()};
+    alert(`MongoDB 연결 정상\nDB: ${payload.dbName}\nCollection: ${payload.collectionName}\nLatency: ${payload.latencyMs}ms`);
+  }catch(e){
+    syncStatus = {...syncStatus, loading:false, source:"backup", error:`MongoDB 진단 실패: ${e.message || "원인 미상"}`};
+    alert(syncStatus.error);
+  }finally{
+    updateSyncIndicator();
+    render();
+  }
 }
 function syncClass(){
   if(syncStatus.error) return "error";
@@ -303,6 +325,7 @@ function render(){
           </div>
           <label class="search-box">${icon("search")}<input data-field="search" value="${h(state.search)}" placeholder="검색: 카시트, 부모급여, 조리원, BCG" /></label>
           <button class="btn" data-action="load-cloud">${icon("refresh-cw")}동기화</button>
+          <button class="btn" data-action="health-check">${icon("stethoscope")}진단</button>
           <button class="btn" data-action="export-json">${icon("download")}백업</button>
           <button class="btn btn-danger" data-action="reset-checks">${icon("rotate-ccw")}체크 초기화</button>
         </div>
@@ -453,6 +476,7 @@ app.addEventListener("click", e=>{
   if(a==="open-mobile"){state.mobileOpen=true;render();}
   if(a==="close-mobile"){state.mobileOpen=false;render();}
   if(a==="load-cloud"){loadRemoteState({force:true});}
+  if(a==="health-check"){runHealthCheck();}
   if(a==="trimester"){state.selectedTrimester=Number(btn.dataset.trimester); const first=DATA.pregnancy.weeks.find(w=>w.trimester===state.selectedTrimester); state.selectedWeek=first.week; saveState(); render();}
   if(a==="select-week"){state.selectedWeek=Number(btn.dataset.week); state.selectedTrimester=DATA.pregnancy.weeks.find(w=>w.week===state.selectedWeek).trimester; saveState(); render();}
   if(a==="select-stage"){state.selectedStageId=btn.dataset.stage; saveState(); render();}

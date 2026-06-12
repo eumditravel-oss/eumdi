@@ -17,6 +17,12 @@ function json(data, init = {}) {
   });
 }
 
+function publicError(error) {
+  return String(error?.message || "Failed to save app state")
+    .replace(/mongodb(\+srv)?:\/\/[^@\s]+@/gi, "mongodb$1://***@")
+    .slice(0, 300);
+}
+
 async function getCollection(env) {
   if (!env.MONGODB_URI) {
     throw new Error("MONGODB_URI is not configured");
@@ -82,7 +88,7 @@ export async function onRequestPost({ request, env }) {
     return json({ ok: true, familyId: FAMILY_ID, updatedAt: now.toISOString() });
   } catch (error) {
     return json(
-      { ok: false, error: error.message || "Failed to save app state" },
+      { ok: false, error: publicError(error) },
       { status: error.status || 500 },
     );
   }

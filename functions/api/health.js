@@ -17,12 +17,12 @@ function json(data, init = {}) {
 }
 
 function publicError(error) {
-  return String(error?.message || "Failed to load app state")
+  return String(error?.message || "MongoDB health check failed")
     .replace(/mongodb(\+srv)?:\/\/[^@\s]+@/gi, "mongodb$1://***@")
     .slice(0, 300);
 }
 
-async function getCollection(env) {
+async function getClient(env) {
   if (!env.MONGODB_URI) {
     throw new Error("MONGODB_URI is not configured");
   }
@@ -41,28 +41,34 @@ async function getCollection(env) {
     clientPromise = client.connect();
   }
 
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection(COLLECTION_NAME);
+  return clientPromise;
 }
 
 export async function onRequestGet({ env }) {
+  const startedAt = Date.now();
+
   try {
-    const collection = await getCollection(env);
-    const doc = await collection.findOne(
-      { familyId: FAMILY_ID },
-      { projection: { _id: 0, familyId: 1, state: 1, updatedAt: 1, createdAt: 1 } },
-    );
+    const client = await getClient(env);
+    await client.db("admin").command({ ping: 1 });
 
     return json({
       ok: true,
+      mongodbUriConfigured: Boolean(env.MONGODB_URI),
+      dbName: DB_NAME,
+      collectionName: COLLECTION_NAME,
       familyId: FAMILY_ID,
-      state: doc?.state ?? null,
-      updatedAt: doc?.updatedAt ?? null,
-      createdAt: doc?.createdAt ?? null,
+      latencyMs: Date.now() - startedAt,
     });
   } catch (error) {
     return json(
-      { ok: false, error: publicError(error) },
+      {
+        ok: false,
+        mongodbUriConfigured: Boolean(env.MONGODB_URI),
+        dbName: DB_NAME,
+        collectionName: COLLECTION_NAME,
+        familyId: FAMILY_ID,
+        error: publicError(error),
+      },
       { status: 500 },
     );
   }
