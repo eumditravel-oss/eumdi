@@ -35,6 +35,8 @@ let familySettingsLoaded = false;
 /* 접기/펼치기 (세션 메모리) */
 const foldState = {};
 let infoTab = "baby";
+let searchOpen = false;
+let diaryFilter = "all";
 function isFolded(id, def){ return foldState[id] ?? def; }
 
 function backupKey(){ return `${BACKUP_STORE_KEY}-${authUser?.familyId || "local"}`; }
@@ -49,7 +51,6 @@ const VIEWS = [
   ["subsidies", "gift", "지원금 & 혜택", "국가·성남시·휴직"],
   ["gear", "baby", "준비물 · 출산가방", "아기용품·조리원"],
   ["compare", "table-properties", "병원 · 조리원 비교", "직접 비교표"],
-  ["budget", "calculator", "총액 계산표", "비용·지원금 계산"],
   ["diary", "message-square", "부부 태교 일기장", "서로에게 남기는 편지"],
   ["family", "users", "가족 정보", "비상연락망"],
 ];
@@ -327,6 +328,7 @@ function isDone(id){ return !!state.checked[id]; }
 function toggleCheck(id){ state.checked[id] = !state.checked[id]; if(!state.checked[id]) delete state.checked[id]; saveState(); render(); }
 
 function render(){
+  const prevScroll=document.querySelector(".main-content")?.scrollTop ?? 0;
   const p=getPosition();
   const all=getTaskStats();
   const currentWeek = DATA.pregnancy.weeks.find(w=>w.week===state.selectedWeek) || DATA.pregnancy.weeks.find(w=>w.week===p.week) || DATA.pregnancy.weeks[11];
@@ -359,10 +361,11 @@ function render(){
       </div>
     </aside>
     <main class="main-content">
-      <header class="content-header">
+      <header class="content-header ${(searchOpen||state.search)?'search-open':''}">
         <div class="header-left">
           <button class="mobile-menu" data-action="open-more" aria-label="메뉴">${icon("menu")}</button>
           <div class="header-titles"><h1>${viewTitle()}</h1><p class="view-subtitle">${viewSubtitle(p,currentWeek)}</p></div>
+          <button class="icon-btn search-toggle" data-action="toggle-search" aria-label="검색">${icon("search")}</button>
         </div>
         <div class="header-right">
           <div class="sync-status ${syncClass()} desktop-only" data-sync-box title="${h(syncDetail())}">
@@ -378,7 +381,7 @@ function render(){
         </div>
       </header>
       <div class="scroll-area">
-        ${renderNotice()}
+        ${state.view==="subsidies"?renderNotice():""}
         ${renderActiveView(p,currentWeek)}
       </div>
     </main>
@@ -389,8 +392,15 @@ function render(){
     ${renderAiChat()}
   </div>`;
   bindIcons();
+  const mc=document.querySelector(".main-content");
+  if(mc) mc.scrollTop=prevScroll;
   const log=document.querySelector(".ai-log");
   if(log) log.scrollTop=log.scrollHeight;
+  const room=document.querySelector("[data-chat-room]");
+  if(room) room.scrollTop=room.scrollHeight;
+  const weekRow=document.querySelector("[data-week-row]");
+  const activeWeek=weekRow?.querySelector(".week-badge.active");
+  if(weekRow && activeWeek) weekRow.scrollLeft=activeWeek.offsetLeft - weekRow.clientWidth/2 + activeWeek.clientWidth/2;
 }
 const BOTTOM_TABS=[["timeline","calendar-days","타임라인"],["roadmap","route","로드맵"],["checklist","list-checks","체크"],["subsidies","gift","지원금"]];
 function renderBottomNav(){
@@ -454,7 +464,8 @@ function viewSubtitle(p,w){
   if(state.view==="checklist") { const s=getTaskStats(); return `총 ${s.total}개 항목 중 ${s.done}개 완료 (${s.pct}%)`; }
   if(state.view==="subsidies") return "국가 공통, 성남시 자체, 휴가·휴직, 생활 할인 혜택을 통합 정리";
   if(state.view==="gear") return "출산가방, 산후조리원, 수유·수면·위생·이동 준비물";
-  if(state.view==="budget") return "지출 예상액과 지원금 예상액을 직접 수정해 총액 계산";
+  if(state.view==="diary") return "둘만의 대화방 · ☆를 누르면 대화가 저장돼요";
+  if(state.view==="timeline") return "";
   return "브라우저에 자동 저장됩니다";
 }
 function renderNotice(){
@@ -462,27 +473,25 @@ function renderNotice(){
   return `<div class="notice notice-fold ${folded?'folded':''}" data-fold-id="notice">${icon("info")}<div class="fold-toggle" data-action="toggle-fold"><strong>자료 확인 안내</strong><span class="fold-caret">${icon("chevron-down")}</span></div><div class="fold-body">지원금·휴가·보건소 사업은 정책 변경 가능성이 있으므로 실제 신청 전 복지로, 고용24, 성남시 또는 관할 보건소 공지로 최종 확인하세요. 모든 데이터는 가족 계정으로 서버에 자동 저장되며, 부부가 각자 로그인하면 같은 내용을 함께 봅니다.</div></div>`;
 }
 function renderActiveView(p, currentWeek){
-  const map={timeline:()=>renderTimeline(p,currentWeek), roadmap:()=>renderRoadmap(p), checklist:()=>renderChecklist(), subsidies:()=>renderSubsidies(), gear:()=>renderGear(), compare:()=>renderCompare(), budget:()=>renderBudget(), diary:()=>renderDiary(), family:()=>renderFamily()};
+  const map={timeline:()=>renderTimeline(p,currentWeek), roadmap:()=>renderRoadmap(p), checklist:()=>renderChecklist(), subsidies:()=>renderSubsidies(), gear:()=>renderGear(), compare:()=>renderCompare(), diary:()=>renderDiary(), family:()=>renderFamily()};
   return (map[state.view]||map.timeline)();
 }
 
 function renderTimeline(p, weekData){
-  const shownTrimester = weekData.trimester;
   const tasks=buildCatalog().filter(t=>t.view==="timeline" && t.week===weekData.week);
   const s=getTaskStats(t=>t.view==="timeline" && t.week===weekData.week);
   const INFO_TABS=[["baby","👶 태아"],["mom","💜 엄마"],["tips","💡 팁"]];
   const tabKey=INFO_TABS.some(([k])=>k===infoTab)?infoTab:"baby";
   return `
     <div class="panel week-picker">
-      <div class="tabs">${[1,2,3].map(n=>`<button class="tab ${shownTrimester===n?'active':''}" data-action="trimester" data-trimester="${n}">${n}분기 ${n===1?'(1~12주)':n===2?'(13~27주)':'(28~40주)'}</button>`).join("")}</div>
-      <div class="week-row">${DATA.pregnancy.weeks.filter(w=>w.trimester===shownTrimester).map(w=>`<button class="week-badge ${w.week===weekData.week?'active':''} ${w.week===p.week?'current':''}" data-action="select-week" data-week="${w.week}">${w.week}주</button>`).join("")}</div>
+      <div class="week-row" data-week-row>${DATA.pregnancy.weeks.map(w=>`<button class="week-badge ${w.week===weekData.week?'active':''} ${w.week===p.week?'current':''}" data-action="select-week" data-week="${w.week}">${w.week}주</button>`).join("")}</div>
     </div>
-    <div class="baby-message"><div class="baby-face">👶</div><div><small>${h(state.family.babyNickname||"아기")}가 엄마에게 · ${weekData.week}주차</small><p>“${h(weekData.babyMessage)}”</p></div></div>
-    <div class="panel info-tabs-panel">
+    <div class="panel week-hero">
+      <div class="hero-msg"><div class="baby-face">👶</div><div class="hero-msg-text"><small>${h(state.family.babyNickname||"아기")}가 엄마에게 · ${weekData.week}주차 ${h(weekData.title)}</small><p>“${h(weekData.babyMessage)}”</p></div></div>
       <div class="info-tabs">${INFO_TABS.map(([k,label])=>`<button class="info-tab ${tabKey===k?'active':''}" data-action="info-tab" data-tab="${k}">${label}</button>`).join("")}</div>
-      <p class="info-body">${h(weekData[tabKey])}</p>
+      <p class="info-body clamp" data-action="expand-info">${h(weekData[tabKey])}</p>
     </div>
-    <div class="panel"><h2 class="section-title">${icon("list-checks")} ${weekData.week}주차 체크리스트 <span class="tag">${s.done}/${s.total} 완료</span></h2>${renderTaskList(tasks)}</div>`;
+    <div class="panel week-tasks"><h2 class="section-title">${icon("list-checks")} 이번 주 체크 <span class="tag">${s.done}/${s.total}</span></h2>${renderTaskList(tasks.map(t=>({id:t.id,title:t.title})),{compact:true})}</div>`;
 }
 function renderRoadmap(p){
   const cur=currentRoadmapStage();
@@ -520,8 +529,11 @@ function filteredTasks(){
     return true;
   });
 }
-function renderTaskList(tasks){
+function renderTaskList(tasks, opts={}){
   if(!tasks.length) return `<div class="empty"><div class="big">✓</div><p>표시할 항목이 없습니다.</p></div>`;
+  if(opts.compact){
+    return `<div class="task-list compact">${tasks.map(t=>`<div class="task-item ${isDone(t.id)?'done':''}" data-action="toggle" data-id="${h(t.id)}"><div class="task-check">${icon("check")}</div><div class="task-title">${h(t.title)}</div></div>`).join("")}</div>`;
+  }
   return `<div class="task-list">${tasks.map(t=>`<div class="task-item ${isDone(t.id)?'done':''}" data-action="toggle" data-id="${h(t.id)}"><div class="task-check">${icon("check")}</div><div><div class="task-title">${h(t.title)}</div>${t.note?`<div class="task-note">${h(t.note)}</div>`:""}<div class="task-meta">${t.category?`<span class="tag">${h(t.category)}</span>`:""}${t.owner?`<span class="tag">${h(t.owner)}</span>`:""}${t.priority?`<span class="tag priority-${h(t.priority)}">${h(t.priority)}</span>`:""}${t.when?`<span class="tag">📅 ${h(t.when)}</span>`:""}${t.deadline?`<span class="tag deadline">⏰ ${h(t.deadline)}</span>`:""}${t.amount?`<span class="tag money">₩ ${h(t.amount)}</span>`:""}${t.stage?`<span class="tag">${h(t.stage)}</span>`:""}</div></div><div class="task-actions"><button class="btn btn-sm" type="button">${isDone(t.id)?'완료':'체크'}</button></div></div>`).join("")}</div>`;
 }
 function groupBy(list,fn){ return list.reduce((a,x)=>{const k=fn(x); (a[k] ||= []).push(x); return a;},{}); }
@@ -567,17 +579,61 @@ function renderGear(){
 function renderCompare(){
   return `<div class="grid">${Object.entries(DATA.planner.comparisonConfig).map(([group,config])=>`<div class="comparison-card panel"><h2 class="section-title">${icon(group==='hospitals'?'hospital':'home')} ${h(config.title)}</h2><div class="table-wrap"><table><thead><tr><th>구분</th>${config.fields.map(([_,label])=>`<th>${h(label)}</th>`).join("")}</tr></thead><tbody>${(state.comparisons[group]||[]).map((row,ri)=>`<tr><th>${h(row.label)}</th>${config.fields.map(([key])=>`<td><input data-comparison="${group}.${ri}.${key}" value="${h(row[key]||"")}" placeholder="입력"></td>`).join("")}</tr>`).join("")}</tbody></table></div></div>`).join("")}</div>`;
 }
-function renderBudget(){
-  const expenseTotal=state.budget.expenses.reduce((a,x)=>a+Number(x.amount||0),0);
-  const benefitTotal=state.budget.benefits.reduce((a,x)=>a+Number(x.amount||0),0);
-  return `<div class="grid grid-2"><div class="budget-card panel"><h2 class="section-title">${icon("minus-circle")} 예상 지출</h2>${renderBudgetRows("expenses",state.budget.expenses)}<button class="btn" data-action="add-budget" data-group="expenses">${icon("plus")}지출 항목 추가</button></div><div class="budget-card panel"><h2 class="section-title">${icon("plus-circle")} 예상 지원금</h2>${renderBudgetRows("benefits",state.budget.benefits)}<button class="btn" data-action="add-budget" data-group="benefits">${icon("plus")}지원금 항목 추가</button></div></div><div class="panel"><h2 class="section-title">${icon("calculator")} 총액 계산</h2><div class="total-box"><div class="total-pill"><div class="label">예상 지출</div><div class="value">${money(expenseTotal)}</div></div><div class="total-pill"><div class="label">예상 지원금</div><div class="value">${money(benefitTotal)}</div></div><div class="total-pill"><div class="label">차감 후 예상 부담</div><div class="value">${money(expenseTotal-benefitTotal)}</div></div></div><p class="source-note">기본 금액은 업로드된 자료의 대표 항목을 바탕으로 한 입력값입니다. 실제 금액은 직접 수정해서 사용하세요.</p></div>`;
+function normalizeDiaryEntry(d){
+  if(d.role) return d;
+  const role = d.writer===DIARY_WRITERS[1] ? "wife" : "husband";
+  return { ...d, role, text:[d.title,d.text].filter(Boolean).join("\n"), ts:Number(d.id)||Date.now(), name:ROLE_LABEL[role] };
 }
-function renderBudgetRows(group,rows){
-  return rows.map((row,i)=>`<div class="budget-row"><input class="input" data-budget-name="${group}.${i}" value="${h(row.name)}"><input class="input" type="number" data-budget-amount="${group}.${i}" value="${Number(row.amount||0)}"><button class="btn btn-sm btn-danger" data-action="remove-budget" data-group="${group}" data-index="${i}">삭제</button></div>`).join("");
+function chatTime(ts){
+  const d=new Date(ts);
+  if(isNaN(d)) return "";
+  const hour=d.getHours();
+  return `${hour<12?"오전":"오후"} ${((hour+11)%12)+1}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+function chatDateLabel(ts){
+  const d=new Date(ts);
+  if(isNaN(d)) return "";
+  return d.toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric",weekday:"short"});
 }
 function renderDiary(){
-  const my=defaultDiaryWriter();
-  return `<div class="panel"><h2 class="section-title">${icon("message-square")} 부부 태교 일기장</h2><p class="section-desc">서로에게 남기는 편지예요. 상대방이 로그인하면 같은 일기장을 함께 봅니다.</p><form data-form="diary" class="form-grid"><div class="field"><label>보내는 마음</label><select class="select" name="writer">${DIARY_WRITERS.map(w=>`<option ${w===my?'selected':''}>${w}</option>`).join("")}</select></div><div class="field"><label>제목</label><input class="input" name="title" placeholder="오늘의 기록"></div><div class="field full"><label>내용</label><textarea class="textarea" name="text" placeholder="아기 소식, 고마운 마음, 부탁하고 싶은 일을 서로에게 남겨보세요"></textarea></div><div class="field full"><button class="btn btn-primary" type="submit">${icon("send")}일기 남기기</button></div></form></div><div class="diary-list">${state.diary.length?state.diary.map(d=>`<article class="diary-card ${d.writer===DIARY_WRITERS[1]?'from-wife':'from-husband'}"><div class="diary-meta"><span class="diary-writer">${d.writer===DIARY_WRITERS[1]?'👩→👨':'👨→👩'} ${h(d.writer)}</span><span>${h(d.date)}</span></div>${d.title?`<h4 class="diary-title">${h(d.title)}</h4>`:""}<p>${h(d.text)}</p><button class="btn btn-sm btn-danger" data-action="delete-diary" data-id="${d.id}" style="margin-top:12px">삭제</button></article>`).join(""):`<div class="empty"><div class="big">📝</div><p>아직 작성된 일기가 없습니다.<br>첫 편지를 남겨보세요!</p></div>`}</div>`;
+  const myRole=authUser?.role==="wife"?"wife":"husband";
+  const all=state.diary.map(normalizeDiaryEntry);
+  const savedCount=all.filter(d=>d.saved).length;
+  let list=all.slice().reverse(); // 오래된 메시지가 위로
+  if(diaryFilter==="saved") list=list.filter(d=>d.saved);
+  let lastDate="";
+  const bubbles=list.map(d=>{
+    const mine=d.role===myRole;
+    const dateLabel=chatDateLabel(d.ts);
+    const divider=dateLabel&&dateLabel!==lastDate?`<div class="chat-date"><span>${h(dateLabel)}</span></div>`:"";
+    lastDate=dateLabel||lastDate;
+    const meta=`<div class="kbub-meta">
+        <button class="kbub-act ${d.saved?'on':''}" data-action="save-msg" data-id="${d.id}" title="${d.saved?'저장 해제':'이 대화 저장'}">${d.saved?"★":"☆"}</button>
+        ${mine?`<button class="kbub-act del" data-action="delete-diary" data-id="${d.id}" title="삭제">×</button>`:""}
+        <span class="kbub-time">${chatTime(d.ts)}</span>
+      </div>`;
+    if(mine){
+      return `${divider}<div class="kbub-row mine">${meta}<div class="kbub mine ${d.saved?'saved':''}">${h(d.text).replace(/\n/g,"<br>")}</div></div>`;
+    }
+    return `${divider}<div class="kbub-row other">
+      <div class="kbub-avatar">${d.role==="wife"?"👩":"👨"}</div>
+      <div class="kbub-col"><div class="kbub-name">${h(d.name||ROLE_LABEL[d.role]||"")}</div>
+        <div class="kbub-line"><div class="kbub other ${d.saved?'saved':''}">${h(d.text).replace(/\n/g,"<br>")}</div>${meta}</div>
+      </div></div>`;
+  }).join("");
+  return `<div class="chat-shell">
+    <div class="chat-toolbar">
+      <button class="chip ${diaryFilter==='all'?'active':''}" data-action="diary-filter" data-filter="all">전체 대화</button>
+      <button class="chip ${diaryFilter==='saved'?'active':''}" data-action="diary-filter" data-filter="saved">⭐ 저장됨 ${savedCount?`(${savedCount})`:""}</button>
+    </div>
+    <div class="chat-room" data-chat-room>
+      ${bubbles||`<div class="chat-empty"><div class="big">💬</div><p>${diaryFilter==="saved"?"아직 저장한 대화가 없어요.<br>말풍선 옆 ☆ 별을 눌러 중요한 대화를 보관하세요.":"첫 메시지를 보내보세요!<br>배우자가 로그인하면 같은 대화방을 함께 봅니다."}</p></div>`}
+    </div>
+    <form data-form="diary" class="chat-send-row">
+      <input class="input" name="text" placeholder="${ROLE_LABEL[myRole]}의 메시지 입력" autocomplete="off" maxlength="2000">
+      <button class="btn btn-primary chat-send" type="submit">${icon("send")}</button>
+    </form>
+  </div>`;
 }
 function renderFamily(){
   const fields=[
@@ -806,6 +862,14 @@ app.addEventListener("click", e=>{
     return;
   }
   if(a==="info-tab"){ infoTab=btn.dataset.tab; render(); return; }
+  if(a==="expand-info"){ btn.classList.toggle("clamp"); return; }
+  if(a==="save-msg"){
+    const target=state.diary.find(x=>String(x.id)===String(btn.dataset.id));
+    if(target){ Object.assign(target, normalizeDiaryEntry(target)); target.saved=!target.saved; delete target.writer; saveState(); render(); }
+    return;
+  }
+  if(a==="diary-filter"){ diaryFilter=btn.dataset.filter; render(); return; }
+  if(a==="toggle-search"){ searchOpen=!searchOpen; if(!searchOpen){state.search="";} render(); if(searchOpen){const el=document.querySelector('[data-field="search"]'); el?.focus();} return; }
   if(a==="open-profile"){ profileOpen=true; profileError=""; state.moreOpen=false; render(); return; }
   if(a==="close-profile"){ profileOpen=false; render(); return; }
   if(a==="open-ai"){
@@ -823,35 +887,33 @@ app.addEventListener("click", e=>{
   if(a==="auth-mode"){authMode=btn.dataset.mode;authError="";renderAuth();}
   if(a==="load-cloud"){state.moreOpen=false;loadRemoteState({force:true});}
   if(a==="health-check"){runHealthCheck();}
-  if(a==="trimester"){state.selectedTrimester=Number(btn.dataset.trimester); const first=DATA.pregnancy.weeks.find(w=>w.trimester===state.selectedTrimester); state.selectedWeek=first.week; saveState(); render();}
   if(a==="select-week"){state.selectedWeek=Number(btn.dataset.week); state.selectedTrimester=DATA.pregnancy.weeks.find(w=>w.week===state.selectedWeek).trimester; saveState(); render();}
   if(a==="select-stage"){state.selectedStageId=btn.dataset.stage; saveState(); render();}
   if(a==="toggle"){toggleCheck(btn.dataset.id);}
   if(a==="subsidy-filter"){state.subsidyFilter=btn.dataset.filter; saveState(); render();}
   if(a==="reset-checks"){if(confirm("모든 체크 완료 상태를 초기화할까요?")){state.checked={};saveState();render();}}
   if(a==="export-json"){exportBackup();}
-  if(a==="add-budget"){state.budget[btn.dataset.group].push({name:"새 항목",amount:0}); saveState(); render();}
-  if(a==="remove-budget"){state.budget[btn.dataset.group].splice(Number(btn.dataset.index),1); saveState(); render();}
-  if(a==="delete-diary"){state.diary=state.diary.filter(d=>String(d.id)!==String(btn.dataset.id)); saveState(); render();}
+  if(a==="delete-diary"){ if(confirm("이 메시지를 삭제할까요?")){ state.diary=state.diary.filter(d=>String(d.id)!==String(btn.dataset.id)); saveState(); render(); } }
 });
 app.addEventListener("input", e=>{
   const t=e.target;
   if(t.dataset.field!==undefined){state[t.dataset.field]=t.value; saveState(); if(t.dataset.field==="search"){render(); setTimeout(()=>{const el=document.querySelector('[data-field="search"]'); if(el){el.focus(); el.setSelectionRange(el.value.length, el.value.length);}},0);}}
   if(t.dataset.family!==undefined){state.family[t.dataset.family]=t.value; saveState();}
   if(t.dataset.comparison){const [group,ri,key]=t.dataset.comparison.split("."); state.comparisons[group][Number(ri)][key]=t.value; saveState();}
-  if(t.dataset.budgetName){const [group,i]=t.dataset.budgetName.split("."); state.budget[group][Number(i)].name=t.value; saveState();}
-  if(t.dataset.budgetAmount){const [group,i]=t.dataset.budgetAmount.split("."); state.budget[group][Number(i)].amount=Number(t.value||0); saveState();}
 });
 app.addEventListener("change", e=>{
   const t=e.target;
   if(t.dataset.field!==undefined){state[t.dataset.field]=t.value; saveState(); render();}
   if(t.dataset.family!==undefined){state.family[t.dataset.family]=t.value; if(t.dataset.family==="dueDate"){const pos=getPosition(); if(pos.week){state.selectedWeek=pos.week; state.selectedTrimester=DATA.pregnancy.weeks.find(w=>w.week===pos.week)?.trimester || state.selectedTrimester;}} saveState(); render();}
-  if(t.dataset.budgetAmount){const [group,i]=t.dataset.budgetAmount.split("."); state.budget[group][Number(i)].amount=Number(t.value||0); saveState(); render();}
 });
 app.addEventListener("submit", e=>{
   if(e.target.dataset.form==="diary"){
     e.preventDefault(); const fd=new FormData(e.target); const text=String(fd.get("text")||"").trim(); if(!text) return;
-    state.diary.unshift({id:Date.now(),writer:fd.get("writer"),title:fd.get("title"),text,date:new Date().toLocaleString("ko-KR")}); saveState(); render();
+    const role=authUser?.role==="wife"?"wife":"husband";
+    state.diary.unshift({id:Date.now(), role, name:authUser?.name||ROLE_LABEL[role], text, ts:Date.now(), saved:false});
+    if(state.diary.length>1000) state.diary=state.diary.slice(0,1000);
+    e.target.reset(); saveState(); render();
+    document.querySelector('.chat-send-row [name="text"]')?.focus();
   }
   if(e.target.dataset.form==="profile"){ e.preventDefault(); submitProfile(e.target); }
   if(e.target.dataset.form==="ai"){
