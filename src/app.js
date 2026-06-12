@@ -1,5 +1,8 @@
 const DATA = window.MOMMYFLOW_DATA;
-const STORE_KEY = "mommyflow-integrated-v1";
+const FAMILY_ID = "main";
+const BACKUP_STORE_KEY = "mommyflow-integrated-v1";
+const LOAD_ENDPOINT = "/api/load";
+const SAVE_ENDPOINT = "/api/save";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const VIEWS = [
   ["timeline", "calendar-days", "주차별 타임라인", "1~40주 태아·산모 변화"],
@@ -58,24 +61,139 @@ function createDefaultComparisons(){
   });
   return result;
 }
-function loadState(){
+function mergeState(saved){
   const defaults=createDefaultState();
-  try{
-    const saved=JSON.parse(localStorage.getItem(STORE_KEY)||"{}");
-    return {
-      ...defaults, ...saved,
-      family:{...defaults.family, ...(saved.family||{})},
-      comparisons:{...defaults.comparisons, ...(saved.comparisons||{})},
-      budget:{expenses:saved.budget?.expenses||defaults.budget.expenses, benefits:saved.budget?.benefits||defaults.budget.benefits},
-      checked:saved.checked||{}, diary:saved.diary||[]
-    };
-  }catch(e){return defaults;}
+  saved = saved || {};
+  return {
+    ...defaults, ...saved,
+    family:{...defaults.family, ...(saved.family||{})},
+    comparisons:{...defaults.comparisons, ...(saved.comparisons||{})},
+    budget:{expenses:saved.budget?.expenses||defaults.budget.expenses, benefits:saved.budget?.benefits||defaults.budget.benefits},
+    checked:saved.checked||{}, diary:saved.diary||[]
+  };
 }
-let state = loadState();
+function loadBackupState(){
+  try{
+    return mergeState(JSON.parse(localStorage.getItem(BACKUP_STORE_KEY)||"{}"));
+  }catch(e){return createDefaultState();}
+}
+let state = createDefaultState();
 const app = document.querySelector("#app");
 let catalogCache = null;
+let initialCloudLoadDone = false;
+let changedBeforeCloudLoad = false;
+let saveTimer = null;
+let saveInFlight = false;
+let saveAgain = false;
+let syncStatus = {
+  loading: true,
+  saving: false,
+  source: "cloud",
+  error: "",
+  lastSavedAt: "",
+};
 
-function saveState(){ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+function saveBackupState(){
+  try{ localStorage.setItem(BACKUP_STORE_KEY, JSON.stringify(state)); }catch(e){}
+}
+function saveState(){
+  saveBackupState();
+  if(!initialCloudLoadDone){
+    changedBeforeCloudLoad = true;
+    return;
+  }
+  queueRemoteSave();
+}
+async function loadRemoteState(options={}){
+  syncStatus = {...syncStatus, loading:true, error:""};
+  updateSyncIndicator();
+  try{
+    const response = await fetch(LOAD_ENDPOINT, {
+      method:"GET",
+      headers:{ "accept":"application/json" },
+      cache:"no-store",
+    });
+    const payload = await response.json().catch(()=>({}));
+    if(!response.ok || payload.ok === false) throw new Error(payload.error || "load failed");
+    initialCloudLoadDone = true;
+    if(payload.state && (options.force || !changedBeforeCloudLoad)){
+      state = mergeState(payload.state);
+      saveBackupState();
+      syncStatus = {...syncStatus, loading:false, source:"cloud", error:"", lastSavedAt:payload.updatedAt || syncStatus.lastSavedAt};
+      render();
+      return;
+    }
+    syncStatus = {...syncStatus, loading:false, source:"cloud", error:"", lastSavedAt:payload.updatedAt || syncStatus.lastSavedAt};
+    render();
+    if(changedBeforeCloudLoad) queueRemoteSave();
+  }catch(e){
+    initialCloudLoadDone = true;
+    if(!changedBeforeCloudLoad) state = loadBackupState();
+    syncStatus = {...syncStatus, loading:false, source:"backup", error:"MongoDB를 불러오지 못해 이 기기의 백업을 사용 중입니다."};
+    render();
+  }
+}
+function queueRemoteSave(){
+  if(saveTimer) clearTimeout(saveTimer);
+  syncStatus = {...syncStatus, saving:true, error:""};
+  updateSyncIndicator();
+  saveTimer = setTimeout(flushRemoteSave, 650);
+}
+async function flushRemoteSave(){
+  if(saveInFlight){
+    saveAgain = true;
+    return;
+  }
+  saveInFlight = true;
+  saveTimer = null;
+  syncStatus = {...syncStatus, saving:true, error:""};
+  updateSyncIndicator();
+  try{
+    const response = await fetch(SAVE_ENDPOINT, {
+      method:"POST",
+      headers:{ "content-type":"application/json", "accept":"application/json" },
+      body:JSON.stringify({ familyId:FAMILY_ID, state }),
+    });
+    const payload = await response.json().catch(()=>({}));
+    if(!response.ok || payload.ok === false) throw new Error(payload.error || "save failed");
+    syncStatus = {...syncStatus, saving:false, source:"cloud", error:"", lastSavedAt:payload.updatedAt || new Date().toISOString()};
+  }catch(e){
+    syncStatus = {...syncStatus, saving:false, source:"backup", error:"MongoDB 저장 실패. 이 기기의 백업만 갱신되었습니다."};
+  }finally{
+    saveInFlight = false;
+    updateSyncIndicator();
+    if(saveAgain){
+      saveAgain = false;
+      queueRemoteSave();
+    }
+  }
+}
+function syncLabel(){
+  if(syncStatus.loading) return "MongoDB 불러오는 중";
+  if(syncStatus.saving) return "MongoDB 저장 중";
+  if(syncStatus.error) return "브라우저 백업 모드";
+  return "MongoDB 저장됨";
+}
+function syncDetail(){
+  if(syncStatus.error) return syncStatus.error;
+  if(syncStatus.loading) return "Cloudflare Pages Functions에서 /api/load 호출 중";
+  if(syncStatus.saving) return "변경사항을 /api/save로 저장 중";
+  if(syncStatus.lastSavedAt) return `마지막 저장: ${new Date(syncStatus.lastSavedAt).toLocaleString("ko-KR")}`;
+  return "familyId main 공유 상태";
+}
+function syncClass(){
+  if(syncStatus.error) return "error";
+  if(syncStatus.loading || syncStatus.saving) return "pending";
+  return "ok";
+}
+function updateSyncIndicator(){
+  const label=document.querySelector("[data-sync-status]");
+  const detail=document.querySelector("[data-sync-detail]");
+  const box=document.querySelector("[data-sync-box]");
+  if(label) label.textContent = syncLabel();
+  if(detail) detail.textContent = syncDetail();
+  if(box) box.className = `sync-status ${syncClass()}`;
+}
 function h(value){ return String(value ?? "").replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m])); }
 function stripHtml(value){ const div=document.createElement("div"); div.innerHTML=String(value||""); return div.textContent || div.innerText || ""; }
 function money(num){ return Number(num||0).toLocaleString("ko-KR") + "원"; }
@@ -169,7 +287,7 @@ function render(){
           <div class="notice" style="box-shadow:none;margin:0;padding:12px;font-size:12px">${icon("database")}<div>UI는 <strong>임신출산앱2</strong> 기준, 기능·데이터는 <strong>로드맵 HTML</strong>과 <strong>eumdi-main</strong>까지 합쳤습니다.</div></div>
         </div>
       </nav>
-      <div class="sidebar-footer"><span>LocalStorage 저장</span><span>GitHub Pages 가능</span></div>
+      <div class="sidebar-footer"><span>MongoDB Atlas 저장</span><span>Cloudflare Pages</span></div>
     </aside>
     <main class="main-content">
       <header class="content-header">
@@ -178,7 +296,13 @@ function render(){
           <div class="header-titles"><h1>${viewTitle()}</h1><p class="view-subtitle">${viewSubtitle(p,currentWeek)}</p></div>
         </div>
         <div class="header-right">
+          <div class="sync-status ${syncClass()}" data-sync-box title="${h(syncDetail())}">
+            <span class="sync-dot"></span>
+            <span data-sync-status>${h(syncLabel())}</span>
+            <small data-sync-detail>${h(syncDetail())}</small>
+          </div>
           <label class="search-box">${icon("search")}<input data-field="search" value="${h(state.search)}" placeholder="검색: 카시트, 부모급여, 조리원, BCG" /></label>
+          <button class="btn" data-action="load-cloud">${icon("refresh-cw")}동기화</button>
           <button class="btn" data-action="export-json">${icon("download")}백업</button>
           <button class="btn btn-danger" data-action="reset-checks">${icon("rotate-ccw")}체크 초기화</button>
         </div>
@@ -219,7 +343,7 @@ function viewSubtitle(p,w){
   return "브라우저에 자동 저장됩니다";
 }
 function renderNotice(){
-  return `<div class="notice">${icon("info")}<div><strong>자료 확인 안내</strong><br>지원금·휴가·보건소 사업은 정책 변경 가능성이 있으므로 실제 신청 전 복지로, 고용24, 성남시 또는 관할 보건소 공지로 최종 확인하세요.</div></div>`;
+  return `<div class="notice">${icon("info")}<div><strong>자료 확인 안내</strong><br>지원금·휴가·보건소 사업은 정책 변경 가능성이 있으므로 실제 신청 전 복지로, 고용24, 성남시 또는 관할 보건소 공지로 최종 확인하세요. 가족 데이터는 Cloudflare Pages Functions를 거쳐 MongoDB Atlas의 <strong>mommyflow.app_state</strong>에 저장됩니다.</div></div>`;
 }
 function renderActiveView(p, currentWeek){
   const map={timeline:()=>renderTimeline(p,currentWeek), roadmap:()=>renderRoadmap(p), checklist:()=>renderChecklist(), subsidies:()=>renderSubsidies(), gear:()=>renderGear(), compare:()=>renderCompare(), budget:()=>renderBudget(), diary:()=>renderDiary(), family:()=>renderFamily()};
@@ -328,6 +452,7 @@ app.addEventListener("click", e=>{
   const a=btn.dataset.action;
   if(a==="open-mobile"){state.mobileOpen=true;render();}
   if(a==="close-mobile"){state.mobileOpen=false;render();}
+  if(a==="load-cloud"){loadRemoteState({force:true});}
   if(a==="trimester"){state.selectedTrimester=Number(btn.dataset.trimester); const first=DATA.pregnancy.weeks.find(w=>w.trimester===state.selectedTrimester); state.selectedWeek=first.week; saveState(); render();}
   if(a==="select-week"){state.selectedWeek=Number(btn.dataset.week); state.selectedTrimester=DATA.pregnancy.weeks.find(w=>w.week===state.selectedWeek).trimester; saveState(); render();}
   if(a==="select-stage"){state.selectedStageId=btn.dataset.stage; saveState(); render();}
@@ -365,3 +490,4 @@ function exportBackup(){
   const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="mommyflow-backup.json"; a.click(); URL.revokeObjectURL(url);
 }
 render();
+loadRemoteState();

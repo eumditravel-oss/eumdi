@@ -1,37 +1,38 @@
 # MommyFlow 통합 임신·출산 로드맵
 
-업로드된 세 가지 결과물을 하나로 통합한 GitHub Pages용 정적 웹앱입니다.
+성남시 예비부모 기준 임신 주차별 타임라인, 출산 준비물, 지원금, 행정, 병원·조리원 비교, 예산표를 한 번에 관리하는 웹앱입니다.
 
-## 통합 기준
+## 저장 구조
 
-- `임신출산앱2.zip`: 전체 UI 디자인, 주차별 타임라인, 태명/예정일 카드, 부부 일기장, 출산 전/후 체크리스트, 지원금 데이터
-- `임신출산_로드맵_앱.html`: 임신 확인 직후부터 출산 후 24개월까지의 상세 로드맵, 지원금 그룹, 준비물/출산가방/조리원 체크리스트
-- `eumdi-main.zip`: 전체 기능 구성, 카테고리 필터, 병원·조리원 비교표, 가족 정보, 예산/총액 계산 구조
+- 프론트엔드는 사용자 데이터를 GitHub 코드에 저장하지 않습니다.
+- 앱 상태는 Cloudflare Pages Functions의 `/api/load`, `/api/save`를 통해 MongoDB Atlas에 저장됩니다.
+- MongoDB 연결 문자열은 Cloudflare 환경변수 `MONGODB_URI`에서만 읽습니다.
+- DB 이름은 `mommyflow`, 컬렉션 이름은 `app_state`입니다.
+- 현재 가족 식별자 `familyId`는 `main`으로 고정되어 있어 두 사람이 다른 기기에서 접속해도 같은 데이터를 공유합니다.
+- 브라우저 `localStorage`는 MongoDB 장애나 오프라인 상황의 백업 용도로만 사용합니다.
 
-## 실행 방법
+## Cloudflare Pages 배포
 
-로컬에서 바로 열려면 `index.html`을 브라우저로 실행하면 됩니다.
+1. Cloudflare Pages에서 이 GitHub 저장소를 연결합니다.
+2. Build command는 비워두거나 `npm run check`처럼 검증만 실행해도 됩니다.
+3. Build output directory는 저장소 루트 `.`를 사용합니다.
+4. Pages 프로젝트의 Settings > Environment variables에서 `MONGODB_URI`를 Secret/환경변수로 추가합니다.
+5. MongoDB Atlas Network Access에서 Cloudflare Functions가 접속할 수 있도록 허용 범위를 설정합니다.
+6. 배포 후 `https://프로젝트명.pages.dev`에서 앱을 열면 `/api/load`로 `familyId: main` 데이터를 불러옵니다.
 
-로컬 서버로 확인하려면 프로젝트 루트에서 아래 명령을 실행하세요.
+## 로컬 개발
 
 ```bash
-python -m http.server 8000
+npm install
+cp .dev.vars.example .dev.vars
+# .dev.vars에 실제 MONGODB_URI를 직접 입력합니다. 이 파일은 커밋하지 않습니다.
+npm run dev
 ```
 
-그다음 브라우저에서 `http://localhost:8000`으로 접속합니다.
+## 보안 메모
 
-## GitHub Pages 배포
-
-1. 이 폴더 전체를 GitHub 저장소 루트에 업로드합니다.
-2. GitHub 저장소에서 `Settings → Pages`로 이동합니다.
-3. `Deploy from a branch`를 선택합니다.
-4. Branch는 `main`, 폴더는 `/root`로 설정합니다.
-5. 저장 후 표시되는 Pages 주소로 접속합니다.
-
-## 저장 방식
-
-체크 상태, 예정일, 태명, 가족 정보, 병원·조리원 비교표, 예산표, 부부 일기는 브라우저 `localStorage`에 저장됩니다. 서버나 DB가 없어도 동작합니다.
+`MONGODB_URI`, DB 비밀번호, secret key, `.dev.vars`, `.env` 파일은 절대 GitHub에 커밋하지 않습니다. `.gitignore`가 이 파일들을 제외하도록 설정되어 있습니다.
 
 ## 주의
 
-지원금, 휴가·휴직, 보건소 사업, 성남시 지원 항목은 정책 변경 가능성이 있습니다. 실제 신청 전에는 복지로, 고용24, 성남시, 관할 보건소의 최신 공지를 확인해야 합니다.
+지원금, 휴가·휴직, 보건소 사업, 성남시 지원 항목은 정책 변경 가능성이 있습니다. 실제 신청 전에는 복지로, 고용24, 성남시 또는 관할 보건소의 최신 공지를 확인해야 합니다.
