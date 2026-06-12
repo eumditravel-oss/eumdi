@@ -11,7 +11,7 @@
     "dev:api": "node server/index.js",
     "deploy": "wrangler pages deploy .",
     "start": "node server/index.js",
-    "check": "node --check src/config.js && node --check src/app.js && node --check sw.js && node --check server/index.js && node --check functions/api/_proxy.js && node --check functions/api/login.js && node --check functions/api/signup.js && node --check functions/api/me.js && node --check functions/api/logout.js && node --check functions/api/load.js && node --check functions/api/save.js && node --check functions/api/health.js"
+    "check": "node --check src/config.js && node --check src/app.js && node --check sw.js && node --check server/index.js && node --check functions/api/_proxy.js && node --check functions/api/login.js && node --check functions/api/signup.js && node --check functions/api/me.js && node --check functions/api/logout.js && node --check functions/api/load.js && node --check functions/api/save.js && node --check functions/api/health.js && node --check functions/api/profile.js && node --check functions/api/family-settings.js && node --check server/index.js"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

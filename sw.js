@@ -1,5 +1,5 @@
 /* MommyFlow service worker — 정적 자원만 캐시, /api는 항상 네트워크 */
-const CACHE = "mommyflow-shell-v1";
+const CACHE = "mommyflow-shell-v3";
 const SHELL = [
   "/",
   "/index.html",

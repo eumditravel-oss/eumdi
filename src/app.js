@@ -6,12 +6,36 @@ function apiEndpoint(path){ return `${API_BASE_URL}${path}`; }
 const LOAD_ENDPOINT = apiEndpoint("/api/load");
 const SAVE_ENDPOINT = apiEndpoint("/api/save");
 const HEALTH_ENDPOINT = apiEndpoint("/api/health");
+const PROFILE_ENDPOINT = apiEndpoint("/api/profile");
+const FAMILY_SETTINGS_ENDPOINT = apiEndpoint("/api/family-settings");
+
+const ROLE_LABEL = { husband: "남편", wife: "아내" };
+const DIARY_WRITERS = ["남편이 아내에게", "아내가 남편에게"];
+function defaultDiaryWriter(){ return authUser?.role === "wife" ? "아내가 남편에게" : "남편이 아내에게"; }
 
 let authToken = "";
 let authUser = null;
 let authMode = "login";
 let authError = "";
 let authBusy = false;
+
+/* 프로필 수정 모달 */
+let profileOpen = false;
+let profileError = "";
+let profileBusy = false;
+
+/* AI 도우미 */
+let aiOpen = false;
+let aiBusy = false;
+let aiMessages = [];           // {role:'user'|'ai', text, sources?, appRefs?}
+let aiSettingsOpen = false;
+let familySettings = null;     // {geminiApiKey}
+let familySettingsLoaded = false;
+
+/* 접기/펼치기 (세션 메모리) */
+const foldState = {};
+let infoTab = "baby";
+function isFolded(id, def){ return foldState[id] ?? def; }
 
 function backupKey(){ return `${BACKUP_STORE_KEY}-${authUser?.familyId || "local"}`; }
 function authHeaders(extra = {}){
@@ -26,7 +50,7 @@ const VIEWS = [
   ["gear", "baby", "준비물 · 출산가방", "아기용품·조리원"],
   ["compare", "table-properties", "병원 · 조리원 비교", "직접 비교표"],
   ["budget", "calculator", "총액 계산표", "비용·지원금 계산"],
-  ["diary", "message-square", "부부 태교 일기장", "아빠·엄마 메모"],
+  ["diary", "message-square", "부부 태교 일기장", "서로에게 남기는 편지"],
   ["family", "users", "가족 정보", "비상연락망"],
 ];
 const CATEGORY_LABEL = Object.fromEntries(DATA.planner.baseCategories.map(c => [c.id, c.name]));
@@ -328,6 +352,7 @@ function render(){
           <div class="side-account-text"><b>${h(authUser?.name||"")}</b><small>${h(authUser?.email||"")}</small></div>
         </div>
         <div class="side-account-actions">
+          <button class="btn btn-sm" data-action="open-profile">${icon("user-pen")}내 정보</button>
           <button class="btn btn-sm" data-action="copy-code" title="배우자 초대용 가족 코드">${icon("link")}가족 코드 ${h(authUser?.familyCode||"-")}</button>
           <button class="btn btn-sm btn-danger" data-action="logout">${icon("log-out")}로그아웃</button>
         </div>
@@ -359,8 +384,13 @@ function render(){
     </main>
     ${renderBottomNav()}
     ${renderMoreSheet(p)}
+    ${renderProfileModal()}
+    ${renderAiFab()}
+    ${renderAiChat()}
   </div>`;
   bindIcons();
+  const log=document.querySelector(".ai-log");
+  if(log) log.scrollTop=log.scrollHeight;
 }
 const BOTTOM_TABS=[["timeline","calendar-days","타임라인"],["roadmap","route","로드맵"],["checklist","list-checks","체크"],["subsidies","gift","지원금"]];
 function renderBottomNav(){
@@ -375,9 +405,10 @@ function renderMoreSheet(p){
   <section class="more-sheet ${state.moreOpen?'open':''}" role="dialog" aria-label="전체 메뉴">
     <div class="sheet-grab" data-action="close-more"></div>
     <div class="sheet-account">
-      <div class="side-avatar">${h((authUser?.name||"?").slice(0,1))}</div>
-      <div class="side-account-text"><b>${h(authUser?.name||"")}</b><small>${h(authUser?.email||"")} · ${h(p.label)}</small></div>
-      <button class="btn btn-sm btn-danger" data-action="logout">${icon("log-out")}로그아웃</button>
+      <div class="side-avatar">${authUser?.role==="wife"?"👩":authUser?.role==="husband"?"👨":h((authUser?.name||"?").slice(0,1))}</div>
+      <div class="side-account-text"><b>${h(authUser?.name||"")} <span class="role-badge">${h(ROLE_LABEL[authUser?.role]||"")}</span></b><small>${h(authUser?.email||"")} · ${h(p.label)}</small></div>
+      <button class="btn btn-sm" data-action="open-profile">${icon("user-pen")}내 정보</button>
+      <button class="btn btn-sm btn-danger" data-action="logout">${icon("log-out")}</button>
     </div>
     <div class="family-code-row">
       <div>가족 코드 <b>${h(authUser?.familyCode||"-")}</b><small>배우자가 회원가입할 때 입력하면 같은 데이터를 함께 봐요</small></div>
@@ -427,7 +458,8 @@ function viewSubtitle(p,w){
   return "브라우저에 자동 저장됩니다";
 }
 function renderNotice(){
-  return `<div class="notice">${icon("info")}<div><strong>자료 확인 안내</strong><br>지원금·휴가·보건소 사업은 정책 변경 가능성이 있으므로 실제 신청 전 복지로, 고용24, 성남시 또는 관할 보건소 공지로 최종 확인하세요. 모든 데이터는 가족 계정으로 서버에 자동 저장되며, 부부가 각자 휴대폰에서 로그인하면 같은 내용을 함께 볼 수 있어요.</div></div>`;
+  const folded=isFolded("notice", true);
+  return `<div class="notice notice-fold ${folded?'folded':''}" data-fold-id="notice">${icon("info")}<div class="fold-toggle" data-action="toggle-fold"><strong>자료 확인 안내</strong><span class="fold-caret">${icon("chevron-down")}</span></div><div class="fold-body">지원금·휴가·보건소 사업은 정책 변경 가능성이 있으므로 실제 신청 전 복지로, 고용24, 성남시 또는 관할 보건소 공지로 최종 확인하세요. 모든 데이터는 가족 계정으로 서버에 자동 저장되며, 부부가 각자 로그인하면 같은 내용을 함께 봅니다.</div></div>`;
 }
 function renderActiveView(p, currentWeek){
   const map={timeline:()=>renderTimeline(p,currentWeek), roadmap:()=>renderRoadmap(p), checklist:()=>renderChecklist(), subsidies:()=>renderSubsidies(), gear:()=>renderGear(), compare:()=>renderCompare(), budget:()=>renderBudget(), diary:()=>renderDiary(), family:()=>renderFamily()};
@@ -438,16 +470,17 @@ function renderTimeline(p, weekData){
   const shownTrimester = weekData.trimester;
   const tasks=buildCatalog().filter(t=>t.view==="timeline" && t.week===weekData.week);
   const s=getTaskStats(t=>t.view==="timeline" && t.week===weekData.week);
+  const INFO_TABS=[["baby","👶 태아"],["mom","💜 엄마"],["tips","💡 팁"]];
+  const tabKey=INFO_TABS.some(([k])=>k===infoTab)?infoTab:"baby";
   return `
-    <div class="panel">
+    <div class="panel week-picker">
       <div class="tabs">${[1,2,3].map(n=>`<button class="tab ${shownTrimester===n?'active':''}" data-action="trimester" data-trimester="${n}">${n}분기 ${n===1?'(1~12주)':n===2?'(13~27주)':'(28~40주)'}</button>`).join("")}</div>
       <div class="week-row">${DATA.pregnancy.weeks.filter(w=>w.trimester===shownTrimester).map(w=>`<button class="week-badge ${w.week===weekData.week?'active':''} ${w.week===p.week?'current':''}" data-action="select-week" data-week="${w.week}">${w.week}주</button>`).join("")}</div>
     </div>
-    <div class="baby-message"><div class="baby-face">👶</div><div><small>${h(state.family.babyNickname||"아기")}가 엄마에게</small><p>“${h(weekData.babyMessage)}”</p></div></div>
-    <div class="info-grid">
-      <div class="info-card"><div class="icon">👶</div><h3>태아의 변화</h3><p>${h(weekData.baby)}</p></div>
-      <div class="info-card"><div class="icon">💜</div><h3>엄마의 변화</h3><p>${h(weekData.mom)}</p></div>
-      <div class="info-card"><div class="icon">💡</div><h3>이번 주 팁</h3><p>${h(weekData.tips)}</p></div>
+    <div class="baby-message"><div class="baby-face">👶</div><div><small>${h(state.family.babyNickname||"아기")}가 엄마에게 · ${weekData.week}주차</small><p>“${h(weekData.babyMessage)}”</p></div></div>
+    <div class="panel info-tabs-panel">
+      <div class="info-tabs">${INFO_TABS.map(([k,label])=>`<button class="info-tab ${tabKey===k?'active':''}" data-action="info-tab" data-tab="${k}">${label}</button>`).join("")}</div>
+      <p class="info-body">${h(weekData[tabKey])}</p>
     </div>
     <div class="panel"><h2 class="section-title">${icon("list-checks")} ${weekData.week}주차 체크리스트 <span class="tag">${s.done}/${s.total} 완료</span></h2>${renderTaskList(tasks)}</div>`;
 }
@@ -455,9 +488,18 @@ function renderRoadmap(p){
   const cur=currentRoadmapStage();
   const selected=DATA.standalone.STAGES.find(s=>s.id===state.selectedStageId) || cur;
   const st=getTaskStats(t=>t.view==="roadmap" && t.stageId===selected.id);
-  return `<div class="panel"><div class="chip-row">${DATA.standalone.STAGES.map(s=>`<button class="chip ${selected.id===s.id?'active':''}" data-action="select-stage" data-stage="${s.id}">${s.icon} ${s.name}</button>`).join("")}</div></div>
+  return `<div class="panel week-picker"><div class="chip-row">${DATA.standalone.STAGES.map(s=>`<button class="chip ${selected.id===s.id?'active':''}" data-action="select-stage" data-stage="${s.id}">${s.icon} ${s.name}</button>`).join("")}</div></div>
   <div class="stage-card"><div class="stage-head"><div><div class="stage-period">${h(selected.period)}${cur.id===selected.id?' · 현재 단계':''}</div><div class="stage-title">${selected.icon} ${h(selected.name)}</div><p class="stage-summary">${h(selected.desc)}</p></div><div class="stage-stat">${st.done}/${st.total} 완료</div></div>
-  ${selected.sections.map((sec,si)=>`<div class="road-section"><h3 class="road-section-title">${h(sec.name)}</h3>${sec.tip?`<div class="tip">💡<div>${sec.tip}</div></div>`:""}${renderTaskList(buildCatalog().filter(t=>t.view==="roadmap" && t.stageId===selected.id && t.stage.includes(sec.name)))}</div>`).join("")}</div>`;
+  ${selected.sections.map((sec,si)=>{
+    const list=buildCatalog().filter(t=>t.view==="roadmap" && t.stageId===selected.id && t.stage.includes(sec.name));
+    const done=list.filter(t=>isDone(t.id)).length;
+    const fid=`road-${selected.id}-${si}`;
+    const folded=isFolded(fid, si>0);
+    return `<div class="road-section foldable ${folded?'folded':''}" data-fold-id="${fid}">
+      <h3 class="road-section-title fold-toggle" data-action="toggle-fold"><span>${h(sec.name)}</span><span class="fold-meta">${done}/${list.length}<span class="fold-caret">${icon("chevron-down")}</span></span></h3>
+      <div class="fold-body">${sec.tip?`<div class="tip">💡<div>${sec.tip}</div></div>`:""}${renderTaskList(list)}</div>
+    </div>`;
+  }).join("")}</div>`;
 }
 function renderChecklist(){
   const categories=["all",...new Set(buildCatalog().map(t=>t.category))];
@@ -507,8 +549,20 @@ function renderSubsidyCard(c){
 }
 
 function renderGear(){
-  return `${DATA.standalone.GEAR_GROUPS.map(group=>`<div class="panel"><h2 class="section-title">${icon("package-check")} ${h(group.g)}</h2><div class="gear-grid">${group.list.map(card=>`<article class="gear-card"><div class="gear-head"><div class="round-icon">${card.icon||"🍼"}</div><div><h3>${h(card.name)}</h3>${card.tip?`<p class="task-note">${h(stripHtml(card.tip))}</p>`:""}</div></div>${renderTaskList(card.items.map((it,ii)=>({id:`gear-${card.id}-${ii}`,title:it[0],note:it[1]||"",category:"준비물",stage:card.name,source:group.g})))}</article>`).join("")}</div></div>`).join("")}
-  ${Object.entries(DATA.pregnancy.timelineStages).map(([key,stage])=>`<div class="panel"><h2 class="section-title">${icon("luggage")} ${h(stage.title)}</h2><p class="section-desc">${h(stage.description)}</p>${renderTaskList(stage.checklist.map(item=>({id:`legacy-${key}-${item.id}`,title:item.text,category:"출산/조리원",source:stage.title})))}</div>`).join("")}`;
+  return `${DATA.standalone.GEAR_GROUPS.map(group=>`<div class="panel"><h2 class="section-title">${icon("package-check")} ${h(group.g)}</h2><div class="gear-grid">${group.list.map(card=>{
+    const list=card.items.map((it,ii)=>({id:`gear-${card.id}-${ii}`,title:it[0],note:it[1]||"",category:"준비물",stage:card.name,source:group.g}));
+    const done=list.filter(t=>isDone(t.id)).length;
+    const fid=`gear-${card.id}`;
+    const folded=isFolded(fid, true);
+    return `<article class="gear-card foldable ${folded?'folded':''}" data-fold-id="${fid}"><div class="gear-head fold-toggle" data-action="toggle-fold"><div class="round-icon">${card.icon||"🍼"}</div><div style="flex:1;min-width:0"><h3>${h(card.name)}</h3>${card.tip?`<p class="task-note">${h(stripHtml(card.tip))}</p>`:""}</div><span class="fold-meta">${done}/${list.length}<span class="fold-caret">${icon("chevron-down")}</span></span></div><div class="fold-body">${renderTaskList(list)}</div></article>`;
+  }).join("")}</div></div>`).join("")}
+  ${Object.entries(DATA.pregnancy.timelineStages).map(([key,stage],gi)=>{
+    const list=stage.checklist.map(item=>({id:`legacy-${key}-${item.id}`,title:item.text,category:"출산/조리원",source:stage.title}));
+    const done=list.filter(t=>isDone(t.id)).length;
+    const fid=`legacy-${key}`;
+    const folded=isFolded(fid, true);
+    return `<div class="panel foldable ${folded?'folded':''}" data-fold-id="${fid}"><h2 class="section-title fold-toggle" data-action="toggle-fold"><span>${icon("luggage")} ${h(stage.title)}</span><span class="fold-meta">${done}/${list.length}<span class="fold-caret">${icon("chevron-down")}</span></span></h2><div class="fold-body"><p class="section-desc">${h(stage.description)}</p>${renderTaskList(list)}</div></div>`;
+  }).join("")}`;
 }
 function renderCompare(){
   return `<div class="grid">${Object.entries(DATA.planner.comparisonConfig).map(([group,config])=>`<div class="comparison-card panel"><h2 class="section-title">${icon(group==='hospitals'?'hospital':'home')} ${h(config.title)}</h2><div class="table-wrap"><table><thead><tr><th>구분</th>${config.fields.map(([_,label])=>`<th>${h(label)}</th>`).join("")}</tr></thead><tbody>${(state.comparisons[group]||[]).map((row,ri)=>`<tr><th>${h(row.label)}</th>${config.fields.map(([key])=>`<td><input data-comparison="${group}.${ri}.${key}" value="${h(row[key]||"")}" placeholder="입력"></td>`).join("")}</tr>`).join("")}</tbody></table></div></div>`).join("")}</div>`;
@@ -522,7 +576,8 @@ function renderBudgetRows(group,rows){
   return rows.map((row,i)=>`<div class="budget-row"><input class="input" data-budget-name="${group}.${i}" value="${h(row.name)}"><input class="input" type="number" data-budget-amount="${group}.${i}" value="${Number(row.amount||0)}"><button class="btn btn-sm btn-danger" data-action="remove-budget" data-group="${group}" data-index="${i}">삭제</button></div>`).join("");
 }
 function renderDiary(){
-  return `<div class="panel"><h2 class="section-title">${icon("message-square")} 부부 태교 일기장</h2><form data-form="diary" class="form-grid"><div class="field"><label>작성자</label><select class="select" name="writer"><option>엄마</option><option>아빠</option><option>공동</option></select></div><div class="field"><label>제목</label><input class="input" name="title" placeholder="오늘의 기록"></div><div class="field full"><label>내용</label><textarea class="textarea" name="text" placeholder="아기에게 전하고 싶은 말, 산모 컨디션, 남편이 챙길 일 등을 기록"></textarea></div><div class="field full"><button class="btn btn-primary" type="submit">${icon("plus")}일기 추가</button></div></form></div><div class="diary-list">${state.diary.length?state.diary.map(d=>`<article class="diary-card"><div class="diary-meta"><span>${h(d.writer)} · ${h(d.title||"제목 없음")}</span><span>${h(d.date)}</span></div><p>${h(d.text)}</p><button class="btn btn-sm btn-danger" data-action="delete-diary" data-id="${d.id}" style="margin-top:12px">삭제</button></article>`).join(""):`<div class="empty"><div class="big">📝</div><p>아직 작성된 일기가 없습니다.</p></div>`}</div>`;
+  const my=defaultDiaryWriter();
+  return `<div class="panel"><h2 class="section-title">${icon("message-square")} 부부 태교 일기장</h2><p class="section-desc">서로에게 남기는 편지예요. 상대방이 로그인하면 같은 일기장을 함께 봅니다.</p><form data-form="diary" class="form-grid"><div class="field"><label>보내는 마음</label><select class="select" name="writer">${DIARY_WRITERS.map(w=>`<option ${w===my?'selected':''}>${w}</option>`).join("")}</select></div><div class="field"><label>제목</label><input class="input" name="title" placeholder="오늘의 기록"></div><div class="field full"><label>내용</label><textarea class="textarea" name="text" placeholder="아기 소식, 고마운 마음, 부탁하고 싶은 일을 서로에게 남겨보세요"></textarea></div><div class="field full"><button class="btn btn-primary" type="submit">${icon("send")}일기 남기기</button></div></form></div><div class="diary-list">${state.diary.length?state.diary.map(d=>`<article class="diary-card ${d.writer===DIARY_WRITERS[1]?'from-wife':'from-husband'}"><div class="diary-meta"><span class="diary-writer">${d.writer===DIARY_WRITERS[1]?'👩→👨':'👨→👩'} ${h(d.writer)}</span><span>${h(d.date)}</span></div>${d.title?`<h4 class="diary-title">${h(d.title)}</h4>`:""}<p>${h(d.text)}</p><button class="btn btn-sm btn-danger" data-action="delete-diary" data-id="${d.id}" style="margin-top:12px">삭제</button></article>`).join(""):`<div class="empty"><div class="big">📝</div><p>아직 작성된 일기가 없습니다.<br>첫 편지를 남겨보세요!</p></div>`}</div>`;
 }
 function renderFamily(){
   const fields=[
@@ -531,9 +586,236 @@ function renderFamily(){
   return `<div class="panel"><h2 class="section-title">${icon("users")} 가족 정보</h2><div class="form-grid">${fields.map(([key,label,type])=>`<div class="field"><label>${h(label)}</label><input class="input" type="${type}" data-family="${key}" value="${h(state.family[key]||"")}"></div>`).join("")}<div class="field full"><label>가족 메모</label><textarea class="textarea" data-family="memo">${h(state.family.memo||"")}</textarea></div></div></div><div class="panel"><h2 class="section-title">${icon("siren")} 즉시 병원 연락이 필요한 상황</h2><ul class="warning-list"><li>양수 파수 의심: 양과 관계없이 병원 연락 후 이동</li><li>선홍색 출혈, 심한 복통, 고열, 심한 두통 또는 시야 이상</li><li>태동이 평소보다 현저히 줄거나 느껴지지 않는 경우</li><li>규칙적인 진통이 점점 짧아지고 강해지는 경우</li></ul></div>`;
 }
 
+/* ════════════════ 내 정보 수정 ════════════════ */
+function renderProfileModal(){
+  if(!profileOpen) return "";
+  return `<div class="modal-backdrop show" data-action="close-profile"></div>
+  <section class="modal open" role="dialog" aria-label="내 정보 수정">
+    <h3 class="modal-title">${icon("user-pen")} 내 정보 수정</h3>
+    <form data-form="profile" class="auth-form">
+      <div class="field"><label>이름 (닉네임)</label><input class="input" name="name" value="${h(authUser?.name||"")}" maxlength="30" required></div>
+      <div class="field"><label>역할</label><div class="role-picker">
+        <label class="role-option"><input type="radio" name="role" value="husband" ${authUser?.role!=="wife"?"checked":""}><span>👨 남편</span></label>
+        <label class="role-option"><input type="radio" name="role" value="wife" ${authUser?.role==="wife"?"checked":""}><span>👩 아내</span></label>
+      </div></div>
+      <div class="modal-divider">비밀번호 변경 <small>(바꾸지 않으려면 비워두세요)</small></div>
+      <div class="field"><label>현재 비밀번호</label><input class="input" type="password" name="currentPassword" autocomplete="current-password"></div>
+      <div class="field"><label>새 비밀번호 <small>(8자 이상)</small></label><input class="input" type="password" name="newPassword" minlength="8" autocomplete="new-password"></div>
+      <div class="field"><label>새 비밀번호 확인</label><input class="input" type="password" name="newPassword2" autocomplete="new-password"></div>
+      ${profileError?`<div class="auth-error">⚠️ ${h(profileError)}</div>`:""}
+      <div class="modal-actions">
+        <button class="btn" type="button" data-action="close-profile">닫기</button>
+        <button class="btn btn-primary" type="submit" ${profileBusy?"disabled":""}>${profileBusy?"저장 중…":"저장"}</button>
+      </div>
+    </form>
+  </section>`;
+}
+async function submitProfile(form){
+  if(profileBusy) return;
+  const fd=new FormData(form);
+  const payload={ name:String(fd.get("name")||"").trim(), role:String(fd.get("role")||"") };
+  const newPassword=String(fd.get("newPassword")||"");
+  if(newPassword){
+    if(newPassword!==String(fd.get("newPassword2")||"")){ profileError="새 비밀번호가 서로 일치하지 않습니다."; render(); return; }
+    payload.newPassword=newPassword;
+    payload.currentPassword=String(fd.get("currentPassword")||"");
+    if(!payload.currentPassword){ profileError="비밀번호를 바꾸려면 현재 비밀번호를 입력해 주세요."; render(); return; }
+  }
+  profileBusy=true; profileError=""; render();
+  try{
+    const response=await fetch(PROFILE_ENDPOINT,{
+      method:"POST",
+      headers:authHeaders({ "content-type":"application/json" }),
+      body:JSON.stringify(payload),
+    });
+    if(response.status===401){ handleAuthExpired(); return; }
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || data.ok===false) throw new Error(data.error||"저장에 실패했습니다");
+    authUser={...authUser, ...data.user};
+    profileBusy=false; profileOpen=false;
+    render();
+  }catch(e){
+    profileBusy=false; profileError=e.message||"오류가 발생했습니다"; render();
+  }
+}
+
+/* ════════════════ AI 도우미 ════════════════ */
+const GEMINI_MODELS=["gemini-2.5-flash","gemini-2.0-flash"];
+const AI_SYSTEM_PROMPT=`당신은 임신·출산 관리 앱 'MommyFlow'의 한국어 도우미입니다. 사용자는 성남시에 사는 예비부모 부부입니다.
+규칙:
+1) 사용자 메시지에 [앱 데이터] 블록이 있으면, 그 안에 답이 있는지 먼저 확인하고 있으면 반드시 그것을 우선 근거로 답하세요. 답 끝에 "📚 앱 데이터 기준"이라고 표시하세요.
+2) 앱 데이터로 부족한 질문만 구글 검색을 활용해 최신 정보를 찾고, 그때는 "🔎 검색 기준"이라고 표시하세요.
+3) 지원금·정책 금액은 변동 가능성을 한 줄로 안내하고, 의학적 판단이 필요한 증상은 반드시 병원 상담을 권하세요.
+4) 답변은 한국어로, 휴대폰에서 읽기 좋게 짧은 문단과 불릿으로 간결하게 작성하세요.`;
+
+function searchAppData(query){
+  const tokens=String(query||"").toLowerCase().split(/[\s,.?!·]+/).filter(t=>t.length>=2);
+  if(!tokens.length) return [];
+  const scored=[];
+  const score=(text)=>{ const lower=text.toLowerCase(); let s=0; tokens.forEach(t=>{ if(lower.includes(t)) s+=1; }); return s; };
+  buildCatalog().forEach(t=>{
+    const s=score(`${t.title} ${t.note||""} ${t.category||""} ${t.stage||""}`);
+    if(s>0) scored.push({s, title:t.title, note:[t.note,t.when&&`시기 ${t.when}`,t.deadline&&`마감 ${t.deadline}`,t.amount&&`금액 ${t.amount}`].filter(Boolean).join(" · ")});
+  });
+  DATA.pregnancy.weeks.forEach(w=>{
+    const s=score(`${w.week}주 ${w.title} ${w.baby} ${w.mom} ${w.tips}`);
+    if(s>0) scored.push({s:s+0.5, title:`임신 ${w.week}주차 — ${w.title}`, note:`태아: ${w.baby} / 엄마: ${w.mom} / 팁: ${w.tips}`});
+  });
+  scored.sort((a,b)=>b.s-a.s);
+  const seen=new Set();
+  return scored.filter(r=>{ if(seen.has(r.title)) return false; seen.add(r.title); return true; }).slice(0,6);
+}
+
+async function loadFamilySettings(force){
+  if(familySettingsLoaded && !force) return familySettings;
+  try{
+    const response=await fetch(FAMILY_SETTINGS_ENDPOINT,{headers:authHeaders({accept:"application/json"}),cache:"no-store"});
+    if(response.status===401){ handleAuthExpired(); return null; }
+    const data=await response.json().catch(()=>({}));
+    if(response.ok && data.ok!==false){ familySettings=data.settings||{}; familySettingsLoaded=true; }
+  }catch(e){ familySettings=familySettings||{}; }
+  return familySettings;
+}
+async function saveGeminiKey(value){
+  try{
+    const response=await fetch(FAMILY_SETTINGS_ENDPOINT,{
+      method:"POST",
+      headers:authHeaders({ "content-type":"application/json" }),
+      body:JSON.stringify({ geminiApiKey:value }),
+    });
+    if(response.status===401){ handleAuthExpired(); return false; }
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || data.ok===false) throw new Error(data.error||"저장 실패");
+    familySettings=data.settings||{geminiApiKey:value};
+    return true;
+  }catch(e){ alert(`API 키 저장 실패: ${e.message}`); return false; }
+}
+
+async function callGemini(apiKey, question, appRefs){
+  const refBlock=appRefs.length?`[앱 데이터]\n${appRefs.map(r=>`- ${r.title}: ${r.note}`).join("\n")}\n[/앱 데이터]\n\n`:"";
+  const history=aiMessages.slice(-7,-1).map(m=>({ role:m.role==="user"?"user":"model", parts:[{text:m.text.slice(0,1500)}] }));
+  const body={
+    system_instruction:{ parts:[{ text:AI_SYSTEM_PROMPT }] },
+    contents:[...history, { role:"user", parts:[{ text:`${refBlock}질문: ${question}` }] }],
+    tools:[{ google_search:{} }],
+    generationConfig:{ temperature:0.4, maxOutputTokens:1024 },
+  };
+  let lastError=null;
+  for(const model of GEMINI_MODELS){
+    try{
+      const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,{
+        method:"POST",
+        headers:{ "content-type":"application/json" },
+        body:JSON.stringify(body),
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok){
+        const message=data?.error?.message||`HTTP ${response.status}`;
+        if(response.status===404||/not found|is not supported/i.test(message)){ lastError=new Error(message); continue; }
+        throw new Error(message);
+      }
+      const candidate=data?.candidates?.[0];
+      const text=(candidate?.content?.parts||[]).map(part=>part.text||"").join("").trim();
+      if(!text) throw new Error("AI가 답변을 생성하지 못했어요. 다시 시도해 주세요.");
+      const links=[];
+      const seen=new Set();
+      (candidate?.groundingMetadata?.groundingChunks||[]).forEach(chunk=>{
+        const web=chunk?.web;
+        if(web?.uri && !seen.has(web.uri)){ seen.add(web.uri); links.push({ uri:web.uri, title:web.title||web.uri }); }
+      });
+      return { text, links:links.slice(0,5) };
+    }catch(e){ lastError=e; if(!/not found|is not supported/i.test(e.message||"")) throw e; }
+  }
+  throw lastError||new Error("사용 가능한 Gemini 모델을 찾지 못했습니다");
+}
+
+function aiMarkdown(text){
+  return h(text)
+    .replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>")
+    .replace(/^[*-]\s+/gm,"• ")
+    .replace(/\n/g,"<br>");
+}
+function renderAiFab(){
+  if(aiOpen) return "";
+  return `<button class="ai-fab" data-action="open-ai" aria-label="AI 도우미">${icon("sparkles")}<span>AI</span></button>`;
+}
+function renderAiChat(){
+  const hasKey=!!(familySettings?.geminiApiKey);
+  const showSettings=aiSettingsOpen || (familySettingsLoaded && !hasKey);
+  return `<div class="ai-backdrop ${aiOpen?'show':''}" data-action="close-ai"></div>
+  <section class="ai-panel ${aiOpen?'open':''}" role="dialog" aria-label="AI 도우미">
+    <header class="ai-head">
+      <div class="ai-head-title">${icon("sparkles")}<div><b>AI 도우미</b><small>${hasKey?"앱 데이터 우선 + 구글 검색":"앱 데이터 검색 모드 (API 키 미설정)"}</small></div></div>
+      <button class="icon-btn" data-action="ai-settings" title="API 키 설정">${icon("settings")}</button>
+      <button class="icon-btn" data-action="ai-clear" title="대화 지우기">${icon("eraser")}</button>
+      <button class="icon-btn" data-action="close-ai" title="닫기">${icon("x")}</button>
+    </header>
+    ${showSettings?`<div class="ai-settings">
+      <p><b>Google AI Studio API 키</b> — <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com</a>에서 무료 발급. 한 명이 저장하면 부부가 함께 사용합니다.</p>
+      <form data-form="ai-key" class="ai-key-row">
+        <input class="input" name="key" type="password" placeholder="AIza로 시작하는 키 붙여넣기" value="${h(familySettings?.geminiApiKey||"")}" autocomplete="off">
+        <button class="btn btn-primary btn-sm" type="submit">저장</button>
+      </form>
+      <small>키는 가족 계정에만 서버 저장되며 GitHub 코드에는 들어가지 않아요.</small>
+    </div>`:""}
+    <div class="ai-log">
+      ${aiMessages.length?aiMessages.map(m=>{
+        if(m.role==="user") return `<div class="ai-msg user"><p>${aiMarkdown(m.text)}</p></div>`;
+        return `<div class="ai-msg ai"><div class="ai-avatar">🤖</div><div class="ai-bubble"><p>${aiMarkdown(m.text)}</p>
+          ${m.appRefs?.length?`<div class="ai-refs"><span class="ai-refs-label">📚 앱 데이터</span>${m.appRefs.slice(0,3).map(r=>`<span class="ai-ref-chip">${h(r.title)}</span>`).join("")}</div>`:""}
+          ${m.sources?.length?`<div class="ai-links"><span class="ai-refs-label">🔗 관련 자료</span>${m.sources.map(s=>`<a href="${h(s.uri)}" target="_blank" rel="noopener">${h(s.title)}</a>`).join("")}</div>`:""}
+        </div></div>`;
+      }).join(""):`<div class="ai-empty"><div class="big">✨</div><p><b>무엇이든 물어보세요</b></p><p class="ai-hint">예: "부모급여 언제까지 신청해야 해?" · "지금 16주차인데 뭘 준비해야 해?" · "성남시 산후조리비 알려줘"</p><p class="ai-hint">앱에 정리된 자료에서 먼저 답하고, 없는 내용은 인터넷을 검색해 링크와 함께 알려드려요.</p></div>`}
+      ${aiBusy?`<div class="ai-msg ai"><div class="ai-avatar">🤖</div><div class="ai-bubble ai-typing"><span></span><span></span><span></span></div></div>`:""}
+    </div>
+    <form data-form="ai" class="ai-input-row">
+      <input class="input" name="q" placeholder="질문을 입력하세요" autocomplete="off" ${aiBusy?"disabled":""}>
+      <button class="btn btn-primary ai-send" type="submit" ${aiBusy?"disabled":""}>${icon("send")}</button>
+    </form>
+  </section>`;
+}
+async function askAi(question){
+  aiMessages.push({ role:"user", text:question });
+  if(aiMessages.length>40) aiMessages=aiMessages.slice(-40);
+  aiBusy=true; render();
+  const appRefs=searchAppData(question);
+  await loadFamilySettings();
+  const key=familySettings?.geminiApiKey||"";
+  if(!key){
+    const text=appRefs.length
+      ?`아직 AI 키가 설정되지 않아 앱 데이터 검색 결과만 보여드려요.\n\n${appRefs.map(r=>`• **${r.title}**\n${r.note}`).join("\n\n")}\n\n⚙️ 우측 상단 설정에서 Google AI Studio 키를 저장하면 자연어 답변과 인터넷 검색 링크까지 제공해요.`
+      :"앱 데이터에서 관련 내용을 찾지 못했어요. ⚙️ 설정에서 Google AI Studio API 키를 저장하면 인터넷 검색으로 답을 찾아드릴 수 있어요.";
+    aiMessages.push({ role:"ai", text, appRefs });
+    aiBusy=false; render(); return;
+  }
+  try{
+    const { text, links }=await callGemini(key, question, appRefs);
+    aiMessages.push({ role:"ai", text, sources:links, appRefs:appRefs.slice(0,3) });
+  }catch(e){
+    aiMessages.push({ role:"ai", text:`⚠️ AI 호출에 실패했어요: ${e.message}\n\nAPI 키가 올바른지(⚙️ 설정) 또는 잠시 후 다시 시도해 주세요.`, appRefs });
+  }
+  aiBusy=false; render();
+}
+
 app.addEventListener("click", e=>{
   const btn=e.target.closest("[data-action]"); if(!btn) return;
   const a=btn.dataset.action;
+  if(a==="toggle-fold"){
+    const box=btn.closest("[data-fold-id]");
+    if(box){ const id=box.dataset.foldId; foldState[id]=!box.classList.contains("folded"); box.classList.toggle("folded"); }
+    return;
+  }
+  if(a==="info-tab"){ infoTab=btn.dataset.tab; render(); return; }
+  if(a==="open-profile"){ profileOpen=true; profileError=""; state.moreOpen=false; render(); return; }
+  if(a==="close-profile"){ profileOpen=false; render(); return; }
+  if(a==="open-ai"){
+    aiOpen=true; state.moreOpen=false; render();
+    loadFamilySettings().then(()=>{ if(aiOpen) render(); });
+    return;
+  }
+  if(a==="close-ai"){ aiOpen=false; aiSettingsOpen=false; render(); return; }
+  if(a==="ai-settings"){ aiSettingsOpen=!aiSettingsOpen; render(); return; }
+  if(a==="ai-clear"){ if(aiMessages.length===0 || confirm("AI 대화를 지울까요?")){ aiMessages=[]; render(); } return; }
   if(a==="open-mobile"||a==="open-more"){state.moreOpen=true;render();}
   if(a==="close-mobile"||a==="close-more"){state.moreOpen=false;render();}
   if(a==="logout"){logout();}
@@ -571,6 +853,19 @@ app.addEventListener("submit", e=>{
     e.preventDefault(); const fd=new FormData(e.target); const text=String(fd.get("text")||"").trim(); if(!text) return;
     state.diary.unshift({id:Date.now(),writer:fd.get("writer"),title:fd.get("title"),text,date:new Date().toLocaleString("ko-KR")}); saveState(); render();
   }
+  if(e.target.dataset.form==="profile"){ e.preventDefault(); submitProfile(e.target); }
+  if(e.target.dataset.form==="ai"){
+    e.preventDefault();
+    const q=String(new FormData(e.target).get("q")||"").trim();
+    if(!q || aiBusy) return;
+    e.target.reset();
+    askAi(q);
+  }
+  if(e.target.dataset.form==="ai-key"){
+    e.preventDefault();
+    const key=String(new FormData(e.target).get("key")||"").trim();
+    saveGeminiKey(key).then(ok=>{ if(ok){ aiSettingsOpen=false; render(); } });
+  }
 });
 app.addEventListener("click", e=>{ const view=e.target.closest("[data-view]"); if(view){state.view=view.dataset.view; state.mobileOpen=false; state.moreOpen=false; saveState(); render(); document.querySelector(".main-content")?.scrollTo(0,0);}});
 function exportBackup(){
@@ -590,6 +885,8 @@ async function logout(){
   try{ await fetch(apiEndpoint("/api/logout"),{method:"POST",headers:authHeaders()}); }catch(e){}
   localStorage.removeItem(TOKEN_KEY);
   authToken=""; authUser=null; authError=""; authMode="login";
+  familySettings=null; familySettingsLoaded=false;
+  aiMessages=[]; aiOpen=false; aiSettingsOpen=false; profileOpen=false;
   state=createDefaultState();
   renderAuth();
 }
@@ -617,7 +914,8 @@ function renderAuth(){
         <button class="auth-tab ${isSignup?'active':''}" data-action="auth-mode" data-mode="signup">회원가입</button>
       </div>
       <form data-form="auth" class="auth-form" autocomplete="on">
-        ${isSignup?`<div class="field"><label>이름 (닉네임)</label><input class="input" name="name" placeholder="예: 튼튼맘" required maxlength="30" autocomplete="nickname"></div>`:""}
+        ${isSignup?`<div class="field"><label>이름 (닉네임)</label><input class="input" name="name" placeholder="예: 튼튼맘" required maxlength="30" autocomplete="nickname"></div>
+        <div class="field"><label>나는 누구인가요?</label><div class="role-picker"><label class="role-option"><input type="radio" name="role" value="husband" required><span>👨 남편</span></label><label class="role-option"><input type="radio" name="role" value="wife" required><span>👩 아내</span></label></div></div>`:""}
         <div class="field"><label>이메일</label><input class="input" type="email" name="email" placeholder="you@example.com" required autocomplete="${isSignup?'email':'username'}" inputmode="email" autocapitalize="off"></div>
         <div class="field"><label>비밀번호 <small>(8자 이상)</small></label><input class="input" type="password" name="password" required minlength="8" autocomplete="${isSignup?'new-password':'current-password'}"></div>
         ${isSignup?`<div class="field"><label>비밀번호 확인</label><input class="input" type="password" name="password2" required minlength="8" autocomplete="new-password"></div>
@@ -637,6 +935,8 @@ async function submitAuth(form){
   if(authMode==="signup"){
     if(payload.password!==String(fd.get("password2")||"")){ authError="비밀번호가 서로 일치하지 않습니다."; renderAuth(); return; }
     payload.name=String(fd.get("name")||"");
+    payload.role=String(fd.get("role")||"");
+    if(!payload.role){ authError="남편/아내 중 역할을 선택해 주세요."; renderAuth(); return; }
     payload.familyCode=String(fd.get("familyCode")||"").trim().toUpperCase();
   }
   authBusy=true; authError=""; renderAuth();

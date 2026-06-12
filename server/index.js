@@ -237,11 +237,13 @@ app.post("/api/signup", asyncRoute(async (req, res) => {
   const email = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || "");
   const name = String(req.body?.name || "").trim().slice(0, 30);
+  const role = String(req.body?.role || "").trim();
   const familyCode = String(req.body?.familyCode || "").trim().toUpperCase();
 
   if (!validEmail(email)) throw httpError("올바른 이메일 주소를 입력해 주세요", 400);
   if (password.length < 8) throw httpError("비밀번호는 8자 이상이어야 합니다", 400);
   if (!name) throw httpError("이름(닉네임)을 입력해 주세요", 400);
+  if (!["husband", "wife"].includes(role)) throw httpError("남편/아내 중 역할을 선택해 주세요", 400);
 
   const users = await col("users");
   const existing = await users.findOne({ email }, { projection: { _id: 1 } });
@@ -263,14 +265,14 @@ app.post("/api/signup", asyncRoute(async (req, res) => {
 
   const { salt, hash } = await hashPassword(password);
   const now = new Date();
-  const inserted = await users.insertOne({ email, name, salt, hash, familyId, createdAt: now });
+  const inserted = await users.insertOne({ email, name, role, salt, hash, familyId, createdAt: now });
   const user = { _id: inserted.insertedId, email, name, familyId };
   const { token } = await createSession(user);
 
   json(res, {
     ok: true,
     token,
-    user: { email, name, familyId, familyCode: codeForClient },
+    user: { email, name, role, familyId, familyCode: codeForClient },
   });
 }));
 
@@ -291,7 +293,7 @@ app.post("/api/login", asyncRoute(async (req, res) => {
   json(res, {
     ok: true,
     token,
-    user: { email: user.email, name: user.name, familyId: user.familyId, familyCode },
+    user: { email: user.email, name: user.name, role: user.role || "", familyId: user.familyId, familyCode },
   });
 }));
 
@@ -300,7 +302,7 @@ app.get("/api/me", asyncRoute(async (req, res) => {
   const users = await col("users");
   const user = await users.findOne(
     { _id: session.userId },
-    { projection: { _id: 0, email: 1, name: 1, familyId: 1 } },
+    { projection: { _id: 0, email: 1, name: 1, role: 1, familyId: 1 } },
   );
   if (!user) throw httpError("사용자를 찾을 수 없습니다", 401);
   const familyCode = await getFamilyCode(user.familyId);
@@ -314,6 +316,71 @@ app.post("/api/logout", asyncRoute(async (req, res) => {
     await sessions.deleteOne({ tokenHash: await sha256Hex(token) });
   }
   json(res, { ok: true });
+}));
+
+
+app.post("/api/profile", asyncRoute(async (req, res) => {
+  const session = await requireSession(req);
+  const users = await col("users");
+  const user = await users.findOne({ _id: session.userId });
+  if (!user) throw httpError("사용자를 찾을 수 없습니다", 401);
+
+  const updates = {};
+  const name = String(req.body?.name || "").trim().slice(0, 30);
+  const role = String(req.body?.role || "").trim();
+  if (name) updates.name = name;
+  if (role) {
+    if (!["husband", "wife"].includes(role)) throw httpError("역할은 남편/아내 중에서 선택해 주세요", 400);
+    updates.role = role;
+  }
+
+  const newPassword = String(req.body?.newPassword || "");
+  if (newPassword) {
+    if (newPassword.length < 8) throw httpError("새 비밀번호는 8자 이상이어야 합니다", 400);
+    const currentPassword = String(req.body?.currentPassword || "");
+    const ok = await verifyPassword(currentPassword, user.salt, user.hash);
+    if (!ok) throw httpError("현재 비밀번호가 올바르지 않습니다", 401);
+    const { salt, hash } = await hashPassword(newPassword);
+    updates.salt = salt;
+    updates.hash = hash;
+  }
+
+  if (Object.keys(updates).length === 0) throw httpError("변경할 내용이 없습니다", 400);
+  updates.updatedAt = new Date();
+  await users.updateOne({ _id: user._id }, { $set: updates });
+
+  const familyCode = await getFamilyCode(user.familyId);
+  json(res, {
+    ok: true,
+    user: {
+      email: user.email,
+      name: updates.name || user.name,
+      role: updates.role || user.role || "",
+      familyId: user.familyId,
+      familyCode,
+    },
+  });
+}));
+
+app.get("/api/family-settings", asyncRoute(async (req, res) => {
+  const session = await requireSession(req);
+  const families = await col("families");
+  const family = await families.findOne(
+    { familyId: session.familyId },
+    { projection: { _id: 0, settings: 1 } },
+  );
+  json(res, { ok: true, settings: { geminiApiKey: family?.settings?.geminiApiKey || "" } });
+}));
+
+app.post("/api/family-settings", asyncRoute(async (req, res) => {
+  const session = await requireSession(req);
+  const geminiApiKey = String(req.body?.geminiApiKey ?? "").trim().slice(0, 200);
+  const families = await col("families");
+  await families.updateOne(
+    { familyId: session.familyId },
+    { $set: { "settings.geminiApiKey": geminiApiKey, "settings.updatedAt": new Date(), "settings.updatedBy": session.email } },
+  );
+  json(res, { ok: true, settings: { geminiApiKey } });
 }));
 
 app.get("/api/load", asyncRoute(async (req, res) => {

@@ -152,3 +152,125 @@ button,.nav-item,.tab,.chip,.week-badge,.task-item,.bn-item,.sheet-item{touch-ac
 @media(min-width:901px){
   .bottom-nav,.sheet-backdrop,.more-sheet{display:none}
 }
+
+/* ═══════════ v3: 가독성·접이식·모달·AI ═══════════ */
+/* 역할 선택 */
+.role-picker{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.role-option{position:relative;display:block;cursor:pointer}
+.role-option input{position:absolute;opacity:0;inset:0}
+.role-option span{display:flex;align-items:center;justify-content:center;gap:6px;border:1.5px solid var(--border-light);border-radius:13px;padding:12px;font-weight:900;color:var(--text-secondary);background:rgba(255,255,255,.8);transition:var(--transition)}
+.role-option input:checked+span{border-color:var(--primary);background:var(--primary-light);color:var(--primary-hover);box-shadow:0 0 0 3px rgba(255,118,134,.12)}
+.role-badge{display:inline-block;font-size:10px;font-weight:900;color:var(--primary-hover);background:var(--primary-light);border-radius:999px;padding:1px 7px;vertical-align:1px}
+
+/* 접이식 */
+.fold-toggle{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;-webkit-user-select:none;user-select:none}
+.fold-meta{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:900;color:var(--text-muted);white-space:nowrap}
+.fold-caret svg{width:17px;height:17px;transition:transform .2s}
+.foldable.folded .fold-caret svg,.notice-fold.folded .fold-caret svg{transform:rotate(-90deg)}
+.foldable.folded>.fold-body,.foldable.folded .gear-head~.fold-body{display:none}
+.foldable .fold-body{margin-top:10px}
+.gear-card.foldable .fold-body{margin-top:12px}
+.notice-fold{flex-direction:column;gap:6px;padding:11px 14px}
+.notice-fold>svg,.notice-fold>i{display:none}
+.notice-fold .fold-toggle{width:100%}
+.notice-fold .fold-body{font-size:12px;color:var(--text-secondary)}
+.notice-fold.folded .fold-body{display:none}
+
+/* 타임라인 압축 카드 */
+.week-picker{padding:14px 16px 6px}
+.info-tabs-panel{padding:14px 16px 16px}
+.info-tabs{display:grid;grid-template-columns:repeat(3,1fr);background:rgba(0,0,0,.045);border-radius:13px;padding:4px;margin-bottom:12px}
+.info-tab{border:none;background:none;border-radius:10px;padding:9px 4px;font-weight:900;font-size:13px;color:var(--text-muted);transition:var(--transition)}
+.info-tab.active{background:#fff;color:var(--primary-hover);box-shadow:var(--shadow-sm)}
+.info-body{font-size:13.5px;color:var(--text-secondary);line-height:1.7;min-height:64px}
+.diary-title{font-size:14px;margin-bottom:6px}
+.diary-card.from-wife{border-left:4px solid var(--primary)}
+.diary-card.from-husband{border-left:4px solid var(--accent-husband)}
+.diary-writer{font-weight:900;color:var(--text-primary)}
+
+/* 모달 */
+.modal-backdrop{position:fixed;inset:0;background:rgba(44,37,39,.45);z-index:90;opacity:0;pointer-events:none;transition:opacity .2s}
+.modal-backdrop.show{opacity:1;pointer-events:auto}
+.modal{position:fixed;z-index:95;left:50%;top:50%;transform:translate(-50%,-46%) scale(.96);opacity:0;pointer-events:none;width:min(420px,calc(100vw - 28px));max-height:86dvh;overflow-y:auto;background:#fff;border-radius:24px;box-shadow:var(--shadow-lg);padding:24px 22px calc(22px + env(safe-area-inset-bottom)/2);transition:all .22s ease}
+.modal.open{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+.modal-title{font-size:17px;font-weight:950;display:flex;align-items:center;gap:8px;margin-bottom:16px}
+.modal-title svg{width:19px;height:19px}
+.modal-divider{font-size:12px;font-weight:950;color:var(--text-muted);border-top:1px solid var(--line);padding-top:14px;margin-top:4px}
+.modal-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
+.modal-actions .btn{justify-content:center;min-height:44px}
+
+/* AI FAB */
+.ai-fab{position:fixed;right:16px;bottom:calc(20px + env(safe-area-inset-bottom));z-index:55;display:inline-flex;align-items:center;gap:7px;border:none;border-radius:999px;padding:14px 18px;background:linear-gradient(135deg,var(--primary),var(--accent-purple));color:#fff;font-weight:950;font-size:14px;box-shadow:0 10px 28px rgba(220,100,140,.45);transition:var(--transition)}
+.ai-fab svg{width:19px;height:19px}
+.ai-fab:active{transform:scale(.94)}
+@media(max-width:900px){.ai-fab{bottom:calc(76px + env(safe-area-inset-bottom))}}
+
+/* AI 패널 */
+.ai-backdrop{position:fixed;inset:0;background:rgba(44,37,39,.42);z-index:96;opacity:0;pointer-events:none;transition:opacity .22s}
+.ai-backdrop.show{opacity:1;pointer-events:auto}
+.ai-panel{position:fixed;z-index:97;display:flex;flex-direction:column;background:#fdfbfb;box-shadow:var(--shadow-lg);right:0;top:0;bottom:0;width:min(440px,100vw);transform:translateX(105%);transition:transform .28s cubic-bezier(.32,.72,.25,1)}
+.ai-panel.open{transform:translateX(0)}
+@media(max-width:900px){.ai-panel{left:0;width:auto;top:auto;height:92dvh;border-radius:24px 24px 0 0;transform:translateY(105%)}.ai-panel.open{transform:translateY(0)}}
+.ai-head{display:flex;align-items:center;gap:8px;padding:14px 14px 12px;border-bottom:1px solid var(--border-light);background:#fff;border-radius:24px 24px 0 0}
+.ai-head-title{display:flex;align-items:center;gap:9px;flex:1;min-width:0}
+.ai-head-title svg{width:20px;height:20px;color:var(--primary)}
+.ai-head-title b{font-size:15px;display:block}
+.ai-head-title small{font-size:10.5px;color:var(--text-muted);font-weight:700;display:block}
+.icon-btn{border:1px solid var(--border-light);background:#fff;border-radius:11px;width:36px;height:36px;display:grid;place-items:center;color:var(--text-secondary)}
+.icon-btn svg{width:16px;height:16px}
+.ai-settings{background:#fff7f0;border-bottom:1px solid #f5dfc8;padding:12px 14px;font-size:12px;color:#6b4b15}
+.ai-settings a{color:var(--primary-hover);font-weight:900}
+.ai-key-row{display:flex;gap:7px;margin:9px 0 5px}
+.ai-key-row .input{flex:1;font-size:14px;padding:9px 11px}
+.ai-settings small{color:#95825f;font-size:10.5px}
+.ai-log{flex:1;overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:12px;-webkit-overflow-scrolling:touch}
+.ai-msg.user{align-self:flex-end;max-width:84%}
+.ai-msg.user p{background:linear-gradient(135deg,var(--primary),#f88d9d);color:#fff;border-radius:17px 17px 5px 17px;padding:10px 14px;font-size:14px;line-height:1.6}
+.ai-msg.ai{display:flex;gap:9px;max-width:94%}
+.ai-avatar{width:30px;height:30px;border-radius:50%;background:#fff;border:1px solid var(--border-light);display:grid;place-items:center;font-size:15px;flex:0 0 30px;margin-top:2px}
+.ai-bubble{background:#fff;border:1px solid var(--border-light);border-radius:5px 17px 17px 17px;padding:11px 14px;font-size:13.5px;line-height:1.7;color:var(--text-primary);box-shadow:var(--shadow-sm);min-width:0}
+.ai-refs,.ai-links{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px;padding-top:9px;border-top:1px dashed var(--line);align-items:center}
+.ai-refs-label{font-size:10.5px;font-weight:950;color:var(--text-muted)}
+.ai-ref-chip{font-size:10.5px;font-weight:800;background:var(--primary-light);color:var(--primary-hover);border-radius:999px;padding:3px 9px}
+.ai-links a{font-size:11px;font-weight:800;color:#2459bd;background:var(--blue-soft);border-radius:999px;padding:3px 10px;text-decoration:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-empty{text-align:center;color:var(--text-muted);padding:36px 18px;display:grid;gap:6px}
+.ai-empty .big{font-size:34px}
+.ai-hint{font-size:11.5px;line-height:1.7}
+.ai-typing{display:inline-flex;gap:5px;align-items:center;padding:14px 16px}
+.ai-typing span{width:7px;height:7px;border-radius:50%;background:#d6a8b4;animation:blink 1.2s infinite}
+.ai-typing span:nth-child(2){animation-delay:.2s}
+.ai-typing span:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+.ai-input-row{display:flex;gap:8px;padding:10px 12px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--border-light);background:#fff}
+.ai-input-row .input{flex:1;font-size:16px;border-radius:999px;padding:11px 16px}
+.ai-send{border-radius:999px;width:46px;height:46px;padding:0;flex:0 0 46px}
+.ai-send svg{width:17px;height:17px}
+
+/* ═══════════ v3: 아이폰 가독성 추가 보정 ═══════════ */
+@media(max-width:900px){
+  body{font-size:14px}
+  .header-left h1{font-size:18px}
+  .view-subtitle{font-size:11.5px}
+  .panel{padding:14px;margin-bottom:14px}
+  .section-title{font-size:16px}
+  .task-item{padding:11px 10px;border-radius:14px}
+  .task-title{font-size:14px;line-height:1.45}
+  .task-note{font-size:12px;line-height:1.55}
+  .task-meta{margin-top:6px;gap:4px}
+  .tag{font-size:10px;padding:2.5px 7px}
+  .baby-message{padding:13px 14px;border-radius:18px;margin-bottom:14px}
+  .baby-message small{font-size:11px}
+  .baby-message p{font-size:14px;line-height:1.55}
+  .baby-face{width:42px;height:42px;font-size:22px;flex:0 0 42px}
+  .week-badge{width:42px;height:42px;flex:0 0 42px;font-size:12.5px}
+  .tab{padding:8px 12px;font-size:12.5px}
+  .stage-title{font-size:17px}
+  .stage-summary{font-size:12.5px}
+  .road-section-title{font-size:14px}
+  .subsidy-card h3,.gear-card h3{font-size:15px}
+  .sub-row{font-size:12px;padding:6px 0}
+  .notice{margin-bottom:14px}
+  .scroll-area{padding:14px 13px calc(150px + env(safe-area-inset-bottom))}
+  .diary-card{padding:14px}
+  .form-grid{gap:11px}
+}
