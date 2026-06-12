@@ -1,4 +1,4 @@
-import { MongoClient } from "mongodb";
+import { MongoClient, ServerApiVersion } from "mongodb";
 
 const DB_NAME = "mommyflow";
 const COLLECTION_NAME = "app_state";
@@ -26,6 +26,11 @@ async function getCollection(env) {
       appName: "mommyflow-cloudflare-pages",
       maxPoolSize: 1,
       serverSelectionTimeoutMS: 8000,
+      serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+      },
     });
     clientPromise = client.connect();
   }

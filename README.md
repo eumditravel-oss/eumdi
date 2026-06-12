@@ -20,6 +20,8 @@
 5. MongoDB Atlas Network Access에서 Cloudflare Functions가 접속할 수 있도록 허용 범위를 설정합니다.
 6. 배포 후 `https://프로젝트명.pages.dev`에서 앱을 열면 `/api/load`로 `familyId: main` 데이터를 불러옵니다.
 
+`MONGODB_URI`에 비밀번호 특수문자(`@`, `<`, `>`, `#`, `/` 등)가 포함되어 있으면 URL encoding 후 입력해야 합니다. Atlas가 보여주는 샘플 코드의 `<password>` 꺾쇠괄호는 자리표시자이므로 실제 환경변수에는 넣지 않습니다.
+
 ## 로컬 개발
 
 ```bash
