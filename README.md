@@ -2,14 +2,20 @@
 
 성남시 예비부모 기준 임신 주차별 타임라인, 출산 준비물, 지원금, 행정, 병원·조리원 비교, 예산표를 한 번에 관리하는 웹앱입니다.
 
-## 저장 구조
+## 로그인 & 저장 구조
 
-- 프론트엔드는 사용자 데이터를 GitHub 코드에 저장하지 않습니다.
-- 앱 상태는 Cloudflare Pages Functions의 `/api/load`, `/api/save`를 통해 MongoDB Atlas에 저장됩니다.
-- MongoDB 연결 문자열은 Cloudflare 환경변수 `MONGODB_URI`에서만 읽습니다.
-- DB 이름은 `mommyflow`, 컬렉션 이름은 `app_state`입니다.
-- 현재 가족 식별자 `familyId`는 `main`으로 고정되어 있어 두 사람이 다른 기기에서 접속해도 같은 데이터를 공유합니다.
-- 브라우저 `localStorage`는 MongoDB 장애나 오프라인 상황의 백업 용도로만 사용합니다.
+- 사용자 데이터는 GitHub 코드에 저장되지 않습니다. 모든 상태는 Cloudflare Pages Functions(`/api/*`)를 통해 MongoDB Atlas에 저장됩니다.
+- **로그인 필수**: `/api/signup`, `/api/login`으로 계정을 만들고, 발급된 세션 토큰(Bearer)으로 `/api/load`, `/api/save`가 동작합니다. 토큰 없이 호출하면 401이 반환됩니다.
+- **가족 코드**: 첫 가입자에게 6자리 가족 코드가 발급됩니다. 배우자가 회원가입 시 이 코드를 입력하면 같은 `familyId`로 묶여 두 사람이 같은 데이터를 실시간 공유합니다. (앱의 ‘전체 메뉴 시트’ 또는 사이드바 하단에서 복사 가능)
+- 비밀번호는 PBKDF2-SHA256(salt 포함)으로 해시되어 `users` 컬렉션에 저장되고, 세션은 토큰 해시만 `sessions` 컬렉션에 90일간 보관됩니다.
+- 컬렉션: `users`, `sessions`, `families`, `app_state` (DB: `mommyflow`)
+- 로그인 도입 전 `familyId: "main"`으로 저장된 기존 데이터는 새 가족의 첫 로드시 자동으로 이어받습니다.
+- 브라우저 `localStorage`는 오프라인/서버 장애 시 백업 용도로만, 가족별 키로 분리되어 사용됩니다.
+
+## 모바일 앱(PWA)
+
+- iPhone Safari에서 **공유 → 홈 화면에 추가**를 누르면 주소창 없는 standalone 앱으로 설치됩니다.
+- 하단 탭바(타임라인/로드맵/체크/지원금/전체), safe-area 대응, 16px 입력(자동 확대 방지), 서비스워커 캐시가 적용되어 있습니다.
 
 ## Cloudflare Pages 배포
 

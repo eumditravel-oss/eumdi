@@ -1,9 +1,20 @@
 const DATA = window.MOMMYFLOW_DATA;
-const FAMILY_ID = "main";
 const BACKUP_STORE_KEY = "mommyflow-integrated-v1";
+const TOKEN_KEY = "mommyflow-token";
 const LOAD_ENDPOINT = "/api/load";
 const SAVE_ENDPOINT = "/api/save";
 const HEALTH_ENDPOINT = "/api/health";
+
+let authToken = "";
+let authUser = null;
+let authMode = "login";
+let authError = "";
+let authBusy = false;
+
+function backupKey(){ return `${BACKUP_STORE_KEY}-${authUser?.familyId || "local"}`; }
+function authHeaders(extra = {}){
+  return authToken ? { ...extra, authorization: `Bearer ${authToken}` } : extra;
+}
 const DAY_MS = 24 * 60 * 60 * 1000;
 const VIEWS = [
   ["timeline", "calendar-days", "주차별 타임라인", "1~40주 태아·산모 변화"],
@@ -75,7 +86,7 @@ function mergeState(saved){
 }
 function loadBackupState(){
   try{
-    return mergeState(JSON.parse(localStorage.getItem(BACKUP_STORE_KEY)||"{}"));
+    return mergeState(JSON.parse(localStorage.getItem(backupKey())||"{}"));
   }catch(e){return createDefaultState();}
 }
 let state = createDefaultState();
@@ -95,7 +106,7 @@ let syncStatus = {
 };
 
 function saveBackupState(){
-  try{ localStorage.setItem(BACKUP_STORE_KEY, JSON.stringify(state)); }catch(e){}
+  try{ localStorage.setItem(backupKey(), JSON.stringify(state)); }catch(e){}
 }
 function saveState(){
   saveBackupState();
@@ -106,14 +117,16 @@ function saveState(){
   queueRemoteSave();
 }
 async function loadRemoteState(options={}){
+  if(!authToken) return;
   syncStatus = {...syncStatus, loading:true, error:""};
   updateSyncIndicator();
   try{
     const response = await fetch(LOAD_ENDPOINT, {
       method:"GET",
-      headers:{ "accept":"application/json" },
+      headers:authHeaders({ "accept":"application/json" }),
       cache:"no-store",
     });
+    if(response.status === 401){ handleAuthExpired(); return; }
     const payload = await response.json().catch(()=>({}));
     if(!response.ok || payload.ok === false) throw new Error(payload.error || "load failed");
     initialCloudLoadDone = true;
@@ -152,9 +165,10 @@ async function flushRemoteSave(){
   try{
     const response = await fetch(SAVE_ENDPOINT, {
       method:"POST",
-      headers:{ "content-type":"application/json", "accept":"application/json" },
-      body:JSON.stringify({ familyId:FAMILY_ID, state }),
+      headers:authHeaders({ "content-type":"application/json", "accept":"application/json" }),
+      body:JSON.stringify({ state }),
     });
+    if(response.status === 401){ saveInFlight=false; handleAuthExpired(); return; }
     const payload = await response.json().catch(()=>({}));
     if(!response.ok || payload.ok === false) throw new Error(payload.error || "save failed");
     syncStatus = {...syncStatus, saving:false, source:"cloud", error:"", lastSavedAt:payload.updatedAt || new Date().toISOString()};
@@ -177,10 +191,10 @@ function syncLabel(){
 }
 function syncDetail(){
   if(syncStatus.error) return syncStatus.error;
-  if(syncStatus.loading) return "Cloudflare Pages Functions에서 /api/load 호출 중";
-  if(syncStatus.saving) return "변경사항을 /api/save로 저장 중";
+  if(syncStatus.loading) return "서버에서 데이터를 불러오는 중";
+  if(syncStatus.saving) return "변경사항을 서버에 저장 중";
   if(syncStatus.lastSavedAt) return `마지막 저장: ${new Date(syncStatus.lastSavedAt).toLocaleString("ko-KR")}`;
-  return "familyId main 공유 상태";
+  return "가족 계정으로 동기화됨";
 }
 async function runHealthCheck(){
   syncStatus = {...syncStatus, loading:true, error:""};
@@ -188,7 +202,7 @@ async function runHealthCheck(){
   try{
     const response = await fetch(HEALTH_ENDPOINT, {
       method:"GET",
-      headers:{ "accept":"application/json" },
+      headers:authHeaders({ "accept":"application/json" }),
       cache:"no-store",
     });
     const payload = await response.json().catch(()=>({}));
@@ -209,12 +223,9 @@ function syncClass(){
   return "ok";
 }
 function updateSyncIndicator(){
-  const label=document.querySelector("[data-sync-status]");
-  const detail=document.querySelector("[data-sync-detail]");
-  const box=document.querySelector("[data-sync-box]");
-  if(label) label.textContent = syncLabel();
-  if(detail) detail.textContent = syncDetail();
-  if(box) box.className = `sync-status ${syncClass()}`;
+  document.querySelectorAll("[data-sync-status]").forEach(el=>el.textContent = syncLabel());
+  document.querySelectorAll("[data-sync-detail]").forEach(el=>el.textContent = syncDetail());
+  document.querySelectorAll("[data-sync-box]").forEach(el=>el.className = `sync-status ${syncClass()}${el.classList.contains("desktop-only")?" desktop-only":""}`);
 }
 function h(value){ return String(value ?? "").replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m])); }
 function stripHtml(value){ const div=document.createElement("div"); div.innerHTML=String(value||""); return div.textContent || div.innerText || ""; }
@@ -309,25 +320,34 @@ function render(){
           <div class="notice" style="box-shadow:none;margin:0;padding:12px;font-size:12px">${icon("database")}<div>UI는 <strong>임신출산앱2</strong> 기준, 기능·데이터는 <strong>로드맵 HTML</strong>과 <strong>eumdi-main</strong>까지 합쳤습니다.</div></div>
         </div>
       </nav>
-      <div class="sidebar-footer"><span>MongoDB Atlas 저장</span><span>Cloudflare Pages</span></div>
+      <div class="sidebar-footer">
+        <div class="side-account">
+          <div class="side-avatar">${h((authUser?.name||"?").slice(0,1))}</div>
+          <div class="side-account-text"><b>${h(authUser?.name||"")}</b><small>${h(authUser?.email||"")}</small></div>
+        </div>
+        <div class="side-account-actions">
+          <button class="btn btn-sm" data-action="copy-code" title="배우자 초대용 가족 코드">${icon("link")}가족 코드 ${h(authUser?.familyCode||"-")}</button>
+          <button class="btn btn-sm btn-danger" data-action="logout">${icon("log-out")}로그아웃</button>
+        </div>
+      </div>
     </aside>
     <main class="main-content">
       <header class="content-header">
         <div class="header-left">
-          <button class="mobile-menu" data-action="open-mobile">${icon("menu")}</button>
+          <button class="mobile-menu" data-action="open-more" aria-label="메뉴">${icon("menu")}</button>
           <div class="header-titles"><h1>${viewTitle()}</h1><p class="view-subtitle">${viewSubtitle(p,currentWeek)}</p></div>
         </div>
         <div class="header-right">
-          <div class="sync-status ${syncClass()}" data-sync-box title="${h(syncDetail())}">
+          <div class="sync-status ${syncClass()} desktop-only" data-sync-box title="${h(syncDetail())}">
             <span class="sync-dot"></span>
             <span data-sync-status>${h(syncLabel())}</span>
             <small data-sync-detail>${h(syncDetail())}</small>
           </div>
           <label class="search-box">${icon("search")}<input data-field="search" value="${h(state.search)}" placeholder="검색: 카시트, 부모급여, 조리원, BCG" /></label>
-          <button class="btn" data-action="load-cloud">${icon("refresh-cw")}동기화</button>
-          <button class="btn" data-action="health-check">${icon("stethoscope")}진단</button>
-          <button class="btn" data-action="export-json">${icon("download")}백업</button>
-          <button class="btn btn-danger" data-action="reset-checks">${icon("rotate-ccw")}체크 초기화</button>
+          <button class="btn desktop-only" data-action="load-cloud">${icon("refresh-cw")}동기화</button>
+          <button class="btn desktop-only" data-action="health-check">${icon("stethoscope")}진단</button>
+          <button class="btn desktop-only" data-action="export-json">${icon("download")}백업</button>
+          <button class="btn btn-danger desktop-only" data-action="reset-checks">${icon("rotate-ccw")}체크 초기화</button>
         </div>
       </header>
       <div class="scroll-area">
@@ -335,8 +355,47 @@ function render(){
         ${renderActiveView(p,currentWeek)}
       </div>
     </main>
+    ${renderBottomNav()}
+    ${renderMoreSheet(p)}
   </div>`;
   bindIcons();
+}
+const BOTTOM_TABS=[["timeline","calendar-days","타임라인"],["roadmap","route","로드맵"],["checklist","list-checks","체크"],["subsidies","gift","지원금"]];
+function renderBottomNav(){
+  const inMore=!BOTTOM_TABS.some(([id])=>id===state.view);
+  return `<nav class="bottom-nav">
+    ${BOTTOM_TABS.map(([id,ic,label])=>`<button class="bn-item ${state.view===id?'active':''}" data-view="${id}">${icon(ic)}<span>${label}</span></button>`).join("")}
+    <button class="bn-item ${inMore||state.moreOpen?'active':''}" data-action="open-more">${icon("layout-grid")}<span>전체</span></button>
+  </nav>`;
+}
+function renderMoreSheet(p){
+  return `<div class="sheet-backdrop ${state.moreOpen?'show':''}" data-action="close-more"></div>
+  <section class="more-sheet ${state.moreOpen?'open':''}" role="dialog" aria-label="전체 메뉴">
+    <div class="sheet-grab" data-action="close-more"></div>
+    <div class="sheet-account">
+      <div class="side-avatar">${h((authUser?.name||"?").slice(0,1))}</div>
+      <div class="side-account-text"><b>${h(authUser?.name||"")}</b><small>${h(authUser?.email||"")} · ${h(p.label)}</small></div>
+      <button class="btn btn-sm btn-danger" data-action="logout">${icon("log-out")}로그아웃</button>
+    </div>
+    <div class="family-code-row">
+      <div>가족 코드 <b>${h(authUser?.familyCode||"-")}</b><small>배우자가 회원가입할 때 입력하면 같은 데이터를 함께 봐요</small></div>
+      <button class="btn btn-sm" data-action="copy-code">${icon("copy")}복사</button>
+    </div>
+    <div class="sheet-grid">
+      ${VIEWS.map(([id,ic,label])=>`<button class="sheet-item ${state.view===id?'active':''}" data-view="${id}">${icon(ic)}<span>${h(label)}</span></button>`).join("")}
+    </div>
+    <div class="sheet-actions">
+      <button class="btn btn-sm" data-action="load-cloud">${icon("refresh-cw")}동기화</button>
+      <button class="btn btn-sm" data-action="health-check">${icon("stethoscope")}진단</button>
+      <button class="btn btn-sm" data-action="export-json">${icon("download")}백업</button>
+      <button class="btn btn-sm btn-danger" data-action="reset-checks">${icon("rotate-ccw")}체크 초기화</button>
+    </div>
+    <div class="sync-status ${syncClass()}" data-sync-box>
+      <span class="sync-dot"></span>
+      <span data-sync-status>${h(syncLabel())}</span>
+      <small data-sync-detail>${h(syncDetail())}</small>
+    </div>
+  </section>`;
 }
 function bindIcons(){ if(window.lucide) window.lucide.createIcons(); }
 function renderDueCard(p){
@@ -366,7 +425,7 @@ function viewSubtitle(p,w){
   return "브라우저에 자동 저장됩니다";
 }
 function renderNotice(){
-  return `<div class="notice">${icon("info")}<div><strong>자료 확인 안내</strong><br>지원금·휴가·보건소 사업은 정책 변경 가능성이 있으므로 실제 신청 전 복지로, 고용24, 성남시 또는 관할 보건소 공지로 최종 확인하세요. 가족 데이터는 Cloudflare Pages Functions를 거쳐 MongoDB Atlas의 <strong>mommyflow.app_state</strong>에 저장됩니다.</div></div>`;
+  return `<div class="notice">${icon("info")}<div><strong>자료 확인 안내</strong><br>지원금·휴가·보건소 사업은 정책 변경 가능성이 있으므로 실제 신청 전 복지로, 고용24, 성남시 또는 관할 보건소 공지로 최종 확인하세요. 모든 데이터는 가족 계정으로 서버에 자동 저장되며, 부부가 각자 휴대폰에서 로그인하면 같은 내용을 함께 볼 수 있어요.</div></div>`;
 }
 function renderActiveView(p, currentWeek){
   const map={timeline:()=>renderTimeline(p,currentWeek), roadmap:()=>renderRoadmap(p), checklist:()=>renderChecklist(), subsidies:()=>renderSubsidies(), gear:()=>renderGear(), compare:()=>renderCompare(), budget:()=>renderBudget(), diary:()=>renderDiary(), family:()=>renderFamily()};
@@ -473,9 +532,12 @@ function renderFamily(){
 app.addEventListener("click", e=>{
   const btn=e.target.closest("[data-action]"); if(!btn) return;
   const a=btn.dataset.action;
-  if(a==="open-mobile"){state.mobileOpen=true;render();}
-  if(a==="close-mobile"){state.mobileOpen=false;render();}
-  if(a==="load-cloud"){loadRemoteState({force:true});}
+  if(a==="open-mobile"||a==="open-more"){state.moreOpen=true;render();}
+  if(a==="close-mobile"||a==="close-more"){state.moreOpen=false;render();}
+  if(a==="logout"){logout();}
+  if(a==="copy-code"){copyFamilyCode();}
+  if(a==="auth-mode"){authMode=btn.dataset.mode;authError="";renderAuth();}
+  if(a==="load-cloud"){state.moreOpen=false;loadRemoteState({force:true});}
   if(a==="health-check"){runHealthCheck();}
   if(a==="trimester"){state.selectedTrimester=Number(btn.dataset.trimester); const first=DATA.pregnancy.weeks.find(w=>w.trimester===state.selectedTrimester); state.selectedWeek=first.week; saveState(); render();}
   if(a==="select-week"){state.selectedWeek=Number(btn.dataset.week); state.selectedTrimester=DATA.pregnancy.weeks.find(w=>w.week===state.selectedWeek).trimester; saveState(); render();}
@@ -508,10 +570,119 @@ app.addEventListener("submit", e=>{
     state.diary.unshift({id:Date.now(),writer:fd.get("writer"),title:fd.get("title"),text,date:new Date().toLocaleString("ko-KR")}); saveState(); render();
   }
 });
-app.addEventListener("click", e=>{ const view=e.target.closest("[data-view]"); if(view){state.view=view.dataset.view; state.mobileOpen=false; saveState(); render();}});
+app.addEventListener("click", e=>{ const view=e.target.closest("[data-view]"); if(view){state.view=view.dataset.view; state.mobileOpen=false; state.moreOpen=false; saveState(); render(); document.querySelector(".main-content")?.scrollTo(0,0);}});
 function exportBackup(){
   const blob=new Blob([JSON.stringify({state,dataVersion:DATA.meta},null,2)],{type:"application/json"});
   const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="mommyflow-backup.json"; a.click(); URL.revokeObjectURL(url);
 }
-render();
-loadRemoteState();
+
+/* ════════════════ 인증 ════════════════ */
+function handleAuthExpired(){
+  authToken=""; authUser=null;
+  localStorage.removeItem(TOKEN_KEY);
+  authError="세션이 만료되었습니다. 다시 로그인해 주세요.";
+  renderAuth();
+}
+async function logout(){
+  if(!confirm("로그아웃할까요? 데이터는 서버에 안전하게 보관됩니다.")) return;
+  try{ await fetch("/api/logout",{method:"POST",headers:authHeaders()}); }catch(e){}
+  localStorage.removeItem(TOKEN_KEY);
+  authToken=""; authUser=null; authError=""; authMode="login";
+  state=createDefaultState();
+  renderAuth();
+}
+function copyFamilyCode(){
+  const code=authUser?.familyCode||"";
+  if(!code){ alert("가족 코드를 불러오지 못했습니다."); return; }
+  const message=`MommyFlow 가족 코드: ${code}\n회원가입 화면의 ‘가족 코드’란에 입력하면 같은 데이터를 함께 볼 수 있어요.`;
+  if(navigator.clipboard?.writeText){
+    navigator.clipboard.writeText(code).then(()=>alert(message)).catch(()=>prompt("아래 코드를 복사하세요", code));
+  }else{
+    prompt("아래 코드를 복사하세요", code);
+  }
+}
+function renderSplash(){
+  app.innerHTML=`<div class="auth-screen"><div class="splash"><span class="logo-icon" style="font-size:46px">🌸</span><div class="logo-text" style="font-size:26px">MommyFlow</div><div class="splash-spinner"></div><p>가족 데이터를 확인하는 중…</p></div></div>`;
+}
+function renderAuth(){
+  const isSignup=authMode==="signup";
+  app.innerHTML=`
+  <div class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-logo"><span class="logo-icon">🌸</span><div><div class="logo-text">MommyFlow</div><div class="logo-sub">우리 가족 임신·출산 로드맵</div></div></div>
+      <div class="auth-tabs">
+        <button class="auth-tab ${!isSignup?'active':''}" data-action="auth-mode" data-mode="login">로그인</button>
+        <button class="auth-tab ${isSignup?'active':''}" data-action="auth-mode" data-mode="signup">회원가입</button>
+      </div>
+      <form data-form="auth" class="auth-form" autocomplete="on">
+        ${isSignup?`<div class="field"><label>이름 (닉네임)</label><input class="input" name="name" placeholder="예: 튼튼맘" required maxlength="30" autocomplete="nickname"></div>`:""}
+        <div class="field"><label>이메일</label><input class="input" type="email" name="email" placeholder="you@example.com" required autocomplete="${isSignup?'email':'username'}" inputmode="email" autocapitalize="off"></div>
+        <div class="field"><label>비밀번호 <small>(8자 이상)</small></label><input class="input" type="password" name="password" required minlength="8" autocomplete="${isSignup?'new-password':'current-password'}"></div>
+        ${isSignup?`<div class="field"><label>비밀번호 확인</label><input class="input" type="password" name="password2" required minlength="8" autocomplete="new-password"></div>
+        <div class="field"><label>가족 코드 <small>(선택)</small></label><input class="input" name="familyCode" placeholder="배우자가 먼저 가입했다면 코드 입력" maxlength="6" autocapitalize="characters" style="text-transform:uppercase"><p class="field-hint">비워두면 새 가족 공간이 만들어지고, 내 가족 코드가 발급돼요.</p></div>`:""}
+        ${authError?`<div class="auth-error">⚠️ ${h(authError)}</div>`:""}
+        <button class="btn btn-primary auth-submit" type="submit" ${authBusy?"disabled":""}>${authBusy?"처리 중…":(isSignup?"가입하고 시작하기":"로그인")}</button>
+      </form>
+      <p class="auth-foot">${isSignup?"부부가 같은 데이터를 보려면 한 명이 먼저 가입한 뒤, 다른 한 명이 ‘가족 코드’로 가입하세요.":"계정이 없다면 회원가입 탭에서 1분 만에 만들 수 있어요."}</p>
+    </div>
+  </div>`;
+  bindIcons();
+}
+async function submitAuth(form){
+  if(authBusy) return;
+  const fd=new FormData(form);
+  const payload={ email:String(fd.get("email")||""), password:String(fd.get("password")||"") };
+  if(authMode==="signup"){
+    if(payload.password!==String(fd.get("password2")||"")){ authError="비밀번호가 서로 일치하지 않습니다."; renderAuth(); return; }
+    payload.name=String(fd.get("name")||"");
+    payload.familyCode=String(fd.get("familyCode")||"").trim().toUpperCase();
+  }
+  authBusy=true; authError=""; renderAuth();
+  try{
+    const response=await fetch(authMode==="signup"?"/api/signup":"/api/login",{
+      method:"POST",
+      headers:{ "content-type":"application/json" },
+      body:JSON.stringify(payload),
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || data.ok===false) throw new Error(data.error||"요청에 실패했습니다");
+    authToken=data.token; authUser=data.user;
+    localStorage.setItem(TOKEN_KEY, authToken);
+    authBusy=false; authError="";
+    state=loadBackupState();
+    initialCloudLoadDone=false; changedBeforeCloudLoad=false;
+    syncStatus={loading:true,saving:false,source:"cloud",error:"",lastSavedAt:""};
+    render();
+    loadRemoteState();
+  }catch(e){
+    authBusy=false;
+    authError=e.message||"오류가 발생했습니다";
+    renderAuth();
+  }
+}
+app.addEventListener("submit", e=>{
+  if(e.target.dataset.form==="auth"){ e.preventDefault(); submitAuth(e.target); }
+});
+
+async function boot(){
+  authToken=localStorage.getItem(TOKEN_KEY)||"";
+  if(!authToken){ renderAuth(); return; }
+  renderSplash();
+  try{
+    const response=await fetch("/api/me",{headers:authHeaders({accept:"application/json"}),cache:"no-store"});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || data.ok===false) throw new Error(data.error||"세션 만료");
+    authUser=data.user;
+    state=loadBackupState();
+    render();
+    loadRemoteState();
+  }catch(e){
+    localStorage.removeItem(TOKEN_KEY);
+    authToken=""; authUser=null;
+    renderAuth();
+  }
+}
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>navigator.serviceWorker.register("/sw.js").catch(()=>{}));
+}
+boot();

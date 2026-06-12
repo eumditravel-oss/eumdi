@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler pages dev .",
     "deploy": "wrangler pages deploy .",
-    "check": "node --check src/app.js && node --check functions/api/load.js && node --check functions/api/save.js && node --check functions/api/health.js"
+    "check": "node --check src/app.js && node --check sw.js && node --check functions/api/_shared.js && node --check functions/api/login.js && node --check functions/api/signup.js && node --check functions/api/me.js && node --check functions/api/logout.js && node --check functions/api/load.js && node --check functions/api/save.js && node --check functions/api/health.js"
   },
   "dependencies": {
     "mongodb": "^6.0.0"

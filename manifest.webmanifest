@@ -1,0 +1,17 @@
+{
+  "name": "MommyFlow 임신·출산 로드맵",
+  "short_name": "MommyFlow",
+  "description": "성남시 예비부모를 위한 임신 주차별 타임라인, 체크리스트, 지원금, 준비물 통합 관리 앱",
+  "lang": "ko",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fbf8f8",
+  "theme_color": "#ff7686",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
