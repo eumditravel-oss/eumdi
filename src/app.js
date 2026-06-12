@@ -81,7 +81,7 @@ const DEFAULT_BUDGET_BENEFITS = [
 
 function createDefaultState(){
   return {
-    view:"timeline", selectedWeek:12, selectedTrimester:1, selectedStageId:"s1", checklistStatus:"all", checklistCategory:"all", checklistOwner:"all", search:"", subsidyFilter:"all",
+    view:"timeline", selectedWeek:12, selectedTrimester:1, selectedStageId:"s1", roadmapSectionIndex:0, checklistSource:"", checklistStatus:"all", checklistCategory:"all", checklistOwner:"all", search:"", subsidyFilter:"all", compareGroup:"hospitals", compareRowIndex:0,
     checked:{},
     family:{ dueDate:"", babyNickname:"", babyName:"", hospital:"", hospitalTel:"", carecenter:"", carecenterTel:"", pediatrician:"", pediatricianTel:"", insurance:"", emergencyContact:"", memo:"" },
     diary:[],
@@ -388,6 +388,7 @@ function render(){
     ${renderBottomNav()}
     ${renderMoreSheet(p)}
     ${renderProfileModal()}
+    ${renderMessageFab()}
     ${renderAiFab()}
     ${renderAiChat()}
   </div>`;
@@ -441,6 +442,18 @@ function renderMoreSheet(p){
   </section>`;
 }
 function bindIcons(){ if(window.lucide) window.lucide.createIcons(); }
+function updateKeyboardInset(){
+  const viewport=window.visualViewport;
+  const inset=viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
+  document.documentElement.style.setProperty("--keyboard-inset", `${Math.round(inset)}px`);
+}
+function initKeyboardInset(){
+  updateKeyboardInset();
+  if(!window.visualViewport) return;
+  window.visualViewport.addEventListener("resize", updateKeyboardInset);
+  window.visualViewport.addEventListener("scroll", updateKeyboardInset);
+  window.addEventListener("orientationchange", ()=>setTimeout(updateKeyboardInset, 250));
+}
 function renderDueCard(p){
   return `<div class="due-date-card">
     <div class="card-row"><span class="baby-emoji">👶</span><div class="week-info"><h4>${h(p.label)}</h4><p>${h(p.subtitle)}</p><span class="baby-nickname-badge">태명: ${h(state.family.babyNickname||"미설정")}</span></div></div>
@@ -497,8 +510,12 @@ function renderRoadmap(p){
   const cur=currentRoadmapStage();
   const selected=DATA.standalone.STAGES.find(s=>s.id===state.selectedStageId) || cur;
   const st=getTaskStats(t=>t.view==="roadmap" && t.stageId===selected.id);
+  const sectionIndex=clamp(Number(state.roadmapSectionIndex||0),0,selected.sections.length-1);
+  const activeSection=selected.sections[sectionIndex] || selected.sections[0];
+  const activeList=buildCatalog().filter(t=>t.view==="roadmap" && t.stageId===selected.id && t.stage.includes(activeSection.name));
+  const activeDone=activeList.filter(t=>isDone(t.id)).length;
   return `<div class="panel week-picker"><div class="chip-row">${DATA.standalone.STAGES.map(s=>`<button class="chip ${selected.id===s.id?'active':''}" data-action="select-stage" data-stage="${s.id}">${s.icon} ${s.name}</button>`).join("")}</div></div>
-  <div class="stage-card"><div class="stage-head"><div><div class="stage-period">${h(selected.period)}${cur.id===selected.id?' · 현재 단계':''}</div><div class="stage-title">${selected.icon} ${h(selected.name)}</div><p class="stage-summary">${h(selected.desc)}</p></div><div class="stage-stat">${st.done}/${st.total} 완료</div></div>
+  <div class="stage-card roadmap-desktop"><div class="stage-head"><div><div class="stage-period">${h(selected.period)}${cur.id===selected.id?' · 현재 단계':''}</div><div class="stage-title">${selected.icon} ${h(selected.name)}</div><p class="stage-summary">${h(selected.desc)}</p></div><div class="stage-stat">${st.done}/${st.total} 완료</div></div>
   ${selected.sections.map((sec,si)=>{
     const list=buildCatalog().filter(t=>t.view==="roadmap" && t.stageId===selected.id && t.stage.includes(sec.name));
     const done=list.filter(t=>isDone(t.id)).length;
@@ -508,15 +525,34 @@ function renderRoadmap(p){
       <h3 class="road-section-title fold-toggle" data-action="toggle-fold"><span>${h(sec.name)}</span><span class="fold-meta">${done}/${list.length}<span class="fold-caret">${icon("chevron-down")}</span></span></h3>
       <div class="fold-body">${sec.tip?`<div class="tip">💡<div>${sec.tip}</div></div>`:""}${renderTaskList(list)}</div>
     </div>`;
-  }).join("")}</div>`;
+  }).join("")}</div>
+  <div class="roadmap-mobile">
+    <div class="mobile-stage-summary">
+      <div><span>${h(selected.period)}${cur.id===selected.id?' · 현재':''}</span><b>${selected.icon} ${h(selected.name)}</b><small>${h(selected.desc)}</small></div>
+      <strong>${st.done}/${st.total}</strong>
+    </div>
+    <div class="mobile-stepper">${selected.sections.map((sec,si)=>`<button class="step-pill ${si===sectionIndex?'active':''}" data-action="select-road-section" data-index="${si}">${si+1}. ${h(sec.name)}</button>`).join("")}</div>
+    <div class="mobile-work-card">
+      <div class="mobile-work-head"><div><small>현재 보는 항목</small><h3>${h(activeSection.name)}</h3></div><span>${activeDone}/${activeList.length}</span></div>
+      ${activeSection.tip?`<div class="tip">💡<div>${activeSection.tip}</div></div>`:""}
+      ${renderTaskList(activeList,{compact:true})}
+    </div>
+  </div>`;
 }
 function renderChecklist(){
   const categories=["all",...new Set(buildCatalog().map(t=>t.category))];
   const owners=["all",...new Set(buildCatalog().map(t=>t.owner).filter(Boolean))];
   const filtered=filteredTasks();
   const grouped=groupBy(filtered,t=>t.source);
-  return `<div class="panel"><h2 class="section-title">${icon("sliders-horizontal")} 필터</h2><div class="form-grid"><div class="field"><label>상태</label><select class="select" data-field="checklistStatus"><option value="all">전체</option><option value="active" ${state.checklistStatus==='active'?'selected':''}>진행 중</option><option value="done" ${state.checklistStatus==='done'?'selected':''}>완료</option></select></div><div class="field"><label>카테고리</label><select class="select" data-field="checklistCategory">${categories.map(c=>`<option value="${h(c)}" ${state.checklistCategory===c?'selected':''}>${c==='all'?'전체':h(c)}</option>`).join("")}</select></div><div class="field"><label>담당</label><select class="select" data-field="checklistOwner">${owners.map(o=>`<option value="${h(o)}" ${state.checklistOwner===o?'selected':''}>${o==='all'?'전체':h(o)}</option>`).join("")}</select></div><div class="field"><label>검색 결과</label><div class="input">${filtered.length}개 항목</div></div></div></div>
-  ${filtered.length?Object.entries(grouped).map(([source,list])=>`<div class="panel"><h2 class="section-title">${sourceTag(source)} ${h(source)} <span class="tag">${list.length}개</span></h2>${renderTaskList(list)}</div>`).join(""):`<div class="empty"><div class="big">🔎</div><p>조건에 맞는 체크리스트가 없습니다.</p></div>`}`;
+  const entries=Object.entries(grouped);
+  const selectedSource=entries.some(([source])=>source===state.checklistSource) ? state.checklistSource : entries[0]?.[0] || "";
+  const selectedList=grouped[selectedSource] || [];
+  return `<div class="panel checklist-filters"><h2 class="section-title">${icon("sliders-horizontal")} 필터</h2><div class="form-grid"><div class="field"><label>상태</label><select class="select" data-field="checklistStatus"><option value="all">전체</option><option value="active" ${state.checklistStatus==='active'?'selected':''}>진행 중</option><option value="done" ${state.checklistStatus==='done'?'selected':''}>완료</option></select></div><div class="field"><label>카테고리</label><select class="select" data-field="checklistCategory">${categories.map(c=>`<option value="${h(c)}" ${state.checklistCategory===c?'selected':''}>${c==='all'?'전체':h(c)}</option>`).join("")}</select></div><div class="field"><label>담당</label><select class="select" data-field="checklistOwner">${owners.map(o=>`<option value="${h(o)}" ${state.checklistOwner===o?'selected':''}>${o==='all'?'전체':h(o)}</option>`).join("")}</select></div><div class="field"><label>검색 결과</label><div class="input">${filtered.length}개 항목</div></div></div></div>
+  <div class="checklist-desktop">${filtered.length?entries.map(([source,list])=>`<div class="panel"><h2 class="section-title">${sourceTag(source)} ${h(source)} <span class="tag">${list.length}개</span></h2>${renderTaskList(list)}</div>`).join(""):`<div class="empty"><div class="big">🔎</div><p>조건에 맞는 체크리스트가 없습니다.</p></div>`}</div>
+  <div class="checklist-mobile">
+    ${entries.length?`<div class="mobile-source-strip">${entries.map(([source,list])=>`<button class="source-pill ${source===selectedSource?'active':''}" data-action="checklist-source" data-source="${h(source)}"><span>${h(source)}</span><b>${list.length}</b></button>`).join("")}</div>
+    <div class="mobile-work-card"><div class="mobile-work-head"><div><small>선택한 묶음</small><h3>${h(selectedSource)}</h3></div><span>${selectedList.filter(t=>isDone(t.id)).length}/${selectedList.length}</span></div>${renderTaskList(selectedList,{compact:true})}</div>`:`<div class="empty"><div class="big">🔎</div><p>조건에 맞는 체크리스트가 없습니다.</p></div>`}
+  </div>`;
 }
 function filteredTasks(){
   const q=state.search.trim().toLowerCase();
@@ -577,7 +613,23 @@ function renderGear(){
   }).join("")}`;
 }
 function renderCompare(){
-  return `<div class="grid">${Object.entries(DATA.planner.comparisonConfig).map(([group,config])=>`<div class="comparison-card panel"><h2 class="section-title">${icon(group==='hospitals'?'hospital':'home')} ${h(config.title)}</h2><div class="table-wrap"><table><thead><tr><th>구분</th>${config.fields.map(([_,label])=>`<th>${h(label)}</th>`).join("")}</tr></thead><tbody>${(state.comparisons[group]||[]).map((row,ri)=>`<tr><th>${h(row.label)}</th>${config.fields.map(([key])=>`<td><input data-comparison="${group}.${ri}.${key}" value="${h(row[key]||"")}" placeholder="입력"></td>`).join("")}</tr>`).join("")}</tbody></table></div></div>`).join("")}</div>`;
+  const groups=Object.entries(DATA.planner.comparisonConfig);
+  const groupKey=DATA.planner.comparisonConfig[state.compareGroup] ? state.compareGroup : groups[0][0];
+  const config=DATA.planner.comparisonConfig[groupKey];
+  const rows=state.comparisons[groupKey] || [];
+  const rowIndex=clamp(Number(state.compareRowIndex||0),0,Math.max(rows.length-1,0));
+  const row=rows[rowIndex] || {};
+  return `<div class="compare-desktop grid">${groups.map(([group,config])=>`<div class="comparison-card panel"><h2 class="section-title">${icon(group==='hospitals'?'hospital':'home')} ${h(config.title)}</h2><div class="table-wrap"><table><thead><tr><th>구분</th>${config.fields.map(([_,label])=>`<th>${h(label)}</th>`).join("")}</tr></thead><tbody>${(state.comparisons[group]||[]).map((row,ri)=>`<tr><th>${h(row.label)}</th>${config.fields.map(([key])=>`<td><input data-comparison="${group}.${ri}.${key}" value="${h(row[key]||"")}" placeholder="입력"></td>`).join("")}</tr>`).join("")}</tbody></table></div></div>`).join("")}</div>
+  <div class="compare-mobile">
+    <div class="panel compare-mobile-head">
+      <div class="segmented">${groups.map(([group,cfg])=>`<button class="${group===groupKey?'active':''}" data-action="compare-group" data-group="${group}">${group==='hospitals'?'병원':'조리원'} 비교</button>`).join("")}</div>
+      <div class="mobile-stepper">${rows.map((candidate,ri)=>`<button class="step-pill ${ri===rowIndex?'active':''}" data-action="compare-row" data-index="${ri}">${h(candidate.name||candidate.label||config.rows[ri]||`${ri+1}번`)}</button>`).join("")}</div>
+    </div>
+    <div class="mobile-edit-card">
+      <div class="mobile-work-head"><div><small>${h(config.title)}</small><h3>${h(row.name||row.label||config.rows[rowIndex]||"후보")}</h3></div><span>${rowIndex+1}/${rows.length}</span></div>
+      <div class="mobile-field-list">${config.fields.map(([key,label])=>`<label class="mobile-field"><span>${h(label)}</span><input class="input" data-comparison="${groupKey}.${rowIndex}.${key}" value="${h(row[key]||"")}" placeholder="${h(label)} 입력"></label>`).join("")}</div>
+    </div>
+  </div>`;
 }
 function normalizeDiaryEntry(d){
   if(d.role) return d;
@@ -654,6 +706,12 @@ function renderProfileModal(){
         <label class="role-option"><input type="radio" name="role" value="husband" ${authUser?.role!=="wife"?"checked":""}><span>👨 남편</span></label>
         <label class="role-option"><input type="radio" name="role" value="wife" ${authUser?.role==="wife"?"checked":""}><span>👩 아내</span></label>
       </div></div>
+      <div class="modal-divider">가족 연결</div>
+      <div class="family-connect-box">
+        <div><span>내 가족 코드</span><b>${h(authUser?.familyCode||"-")}</b></div>
+        <button class="btn btn-sm" type="button" data-action="copy-code">${icon("copy")}복사</button>
+      </div>
+      <div class="field"><label>배우자 가족 코드 입력 <small>(같은 데이터로 연결)</small></label><input class="input" name="familyCode" placeholder="예: AB3K9Q" maxlength="6" autocapitalize="characters" autocomplete="off" style="text-transform:uppercase"><p class="field-hint">이미 따로 가입했다면 배우자 화면의 가족 코드를 입력해 같은 가족 공간으로 이동할 수 있어요.</p></div>
       <div class="modal-divider">비밀번호 변경 <small>(바꾸지 않으려면 비워두세요)</small></div>
       <div class="field"><label>현재 비밀번호</label><input class="input" type="password" name="currentPassword" autocomplete="current-password"></div>
       <div class="field"><label>새 비밀번호 <small>(8자 이상)</small></label><input class="input" type="password" name="newPassword" minlength="8" autocomplete="new-password"></div>
@@ -669,7 +727,12 @@ function renderProfileModal(){
 async function submitProfile(form){
   if(profileBusy) return;
   const fd=new FormData(form);
-  const payload={ name:String(fd.get("name")||"").trim(), role:String(fd.get("role")||"") };
+  const oldFamilyId=authUser?.familyId || "";
+  const payload={
+    name:String(fd.get("name")||"").trim(),
+    role:String(fd.get("role")||""),
+    familyCode:String(fd.get("familyCode")||"").trim().toUpperCase(),
+  };
   const newPassword=String(fd.get("newPassword")||"");
   if(newPassword){
     if(newPassword!==String(fd.get("newPassword2")||"")){ profileError="새 비밀번호가 서로 일치하지 않습니다."; render(); return; }
@@ -689,6 +752,15 @@ async function submitProfile(form){
     if(!response.ok || data.ok===false) throw new Error(data.error||"저장에 실패했습니다");
     authUser={...authUser, ...data.user};
     profileBusy=false; profileOpen=false;
+    if(oldFamilyId && data.user?.familyId && data.user.familyId!==oldFamilyId){
+      state=loadBackupState();
+      initialCloudLoadDone=false;
+      changedBeforeCloudLoad=false;
+      syncStatus={loading:true,saving:false,source:"cloud",error:"",lastSavedAt:""};
+      render();
+      loadRemoteState({force:true});
+      return;
+    }
     render();
   }catch(e){
     profileBusy=false; profileError=e.message||"오류가 발생했습니다"; render();
@@ -795,6 +867,10 @@ function renderAiFab(){
   if(aiOpen) return "";
   return `<button class="ai-fab" data-action="open-ai" aria-label="AI 도우미">${icon("sparkles")}<span>AI</span></button>`;
 }
+function renderMessageFab(){
+  if(aiOpen || state.view==="diary") return "";
+  return `<button class="message-fab" data-view="diary" aria-label="부부 태교 일기장">${icon("message-circle")}<span>메시지</span></button>`;
+}
 function renderAiChat(){
   const hasKey=!!(familySettings?.geminiApiKey);
   const showSettings=aiSettingsOpen || (familySettingsLoaded && !hasKey);
@@ -869,6 +945,10 @@ app.addEventListener("click", e=>{
     return;
   }
   if(a==="diary-filter"){ diaryFilter=btn.dataset.filter; render(); return; }
+  if(a==="select-road-section"){ state.roadmapSectionIndex=Number(btn.dataset.index||0); saveState(); render(); return; }
+  if(a==="checklist-source"){ state.checklistSource=btn.dataset.source||""; saveState(); render(); return; }
+  if(a==="compare-group"){ state.compareGroup=btn.dataset.group||"hospitals"; state.compareRowIndex=0; saveState(); render(); return; }
+  if(a==="compare-row"){ state.compareRowIndex=Number(btn.dataset.index||0); saveState(); render(); return; }
   if(a==="toggle-search"){ searchOpen=!searchOpen; if(!searchOpen){state.search="";} render(); if(searchOpen){const el=document.querySelector('[data-field="search"]'); el?.focus();} return; }
   if(a==="open-profile"){ profileOpen=true; profileError=""; state.moreOpen=false; render(); return; }
   if(a==="close-profile"){ profileOpen=false; render(); return; }
@@ -888,7 +968,7 @@ app.addEventListener("click", e=>{
   if(a==="load-cloud"){state.moreOpen=false;loadRemoteState({force:true});}
   if(a==="health-check"){runHealthCheck();}
   if(a==="select-week"){state.selectedWeek=Number(btn.dataset.week); state.selectedTrimester=DATA.pregnancy.weeks.find(w=>w.week===state.selectedWeek).trimester; saveState(); render();}
-  if(a==="select-stage"){state.selectedStageId=btn.dataset.stage; saveState(); render();}
+  if(a==="select-stage"){state.selectedStageId=btn.dataset.stage; state.roadmapSectionIndex=0; saveState(); render();}
   if(a==="toggle"){toggleCheck(btn.dataset.id);}
   if(a==="subsidy-filter"){state.subsidyFilter=btn.dataset.filter; saveState(); render();}
   if(a==="reset-checks"){if(confirm("모든 체크 완료 상태를 초기화할까요?")){state.checked={};saveState();render();}}
@@ -1049,4 +1129,5 @@ async function boot(){
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>navigator.serviceWorker.register("/sw.js").catch(()=>{}));
 }
+initKeyboardInset();
 boot();

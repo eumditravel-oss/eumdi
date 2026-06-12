@@ -156,6 +156,19 @@ function randomFamilyCode() {
   return [...bytes].map((byte) => alphabet[byte % alphabet.length]).join("");
 }
 
+async function createFamily(families, familyId) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const code = randomFamilyCode();
+    try {
+      await families.insertOne({ familyId, code, createdAt: new Date() });
+      return { familyId, code };
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+    }
+  }
+  throw httpError("가족 코드를 만드는 데 실패했습니다. 다시 시도해 주세요", 500);
+}
+
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -187,6 +200,23 @@ async function createSession(user) {
   return { token, expiresAt };
 }
 
+async function ensureUserFamily(user) {
+  if (!user || (user.familyId && user.familyId !== LEGACY_FAMILY_ID)) return user;
+
+  const families = await col("families");
+  const familyId = `fam_${randomToken(12)}`;
+  const family = await createFamily(families, familyId);
+  const now = new Date();
+
+  const users = await col("users");
+  await users.updateOne({ _id: user._id }, { $set: { familyId, updatedAt: now } });
+
+  const sessions = await col("sessions");
+  await sessions.updateMany({ userId: user._id }, { $set: { familyId } });
+
+  return { ...user, familyId, familyCode: family.code };
+}
+
 async function requireSession(req) {
   const token = readBearer(req);
   if (!token) throw httpError("로그인이 필요합니다", 401);
@@ -197,13 +227,22 @@ async function requireSession(req) {
     await sessions.deleteOne({ _id: session._id });
     throw httpError("세션이 만료되었습니다. 다시 로그인해 주세요", 401);
   }
+  if (!session.familyId || session.familyId === LEGACY_FAMILY_ID) {
+    const users = await col("users");
+    const user = await users.findOne({ _id: session.userId });
+    if (user) {
+      const normalizedUser = await ensureUserFamily(user);
+      return { ...session, familyId: normalizedUser.familyId, email: normalizedUser.email || session.email };
+    }
+  }
   return session;
 }
 
 async function getFamilyCode(familyId) {
   const families = await col("families");
   const family = await families.findOne({ familyId }, { projection: { _id: 0, code: 1 } });
-  return family?.code || "";
+  if (family?.code) return family.code;
+  return (await createFamily(families, familyId)).code;
 }
 
 function asyncRoute(handler) {
@@ -259,8 +298,8 @@ app.post("/api/signup", asyncRoute(async (req, res) => {
     codeForClient = family.code;
   } else {
     familyId = `fam_${randomToken(12)}`;
-    codeForClient = randomFamilyCode();
-    await families.insertOne({ familyId, code: codeForClient, createdAt: new Date() });
+    const family = await createFamily(families, familyId);
+    codeForClient = family.code;
   }
 
   const { salt, hash } = await hashPassword(password);
@@ -288,12 +327,19 @@ app.post("/api/login", asyncRoute(async (req, res) => {
   const ok = await verifyPassword(password, user.salt, user.hash);
   if (!ok) throw httpError("이메일 또는 비밀번호가 올바르지 않습니다", 401);
 
-  const { token } = await createSession(user);
-  const familyCode = await getFamilyCode(user.familyId);
+  const normalizedUser = await ensureUserFamily(user);
+  const { token } = await createSession(normalizedUser);
+  const familyCode = normalizedUser.familyCode || await getFamilyCode(normalizedUser.familyId);
   json(res, {
     ok: true,
     token,
-    user: { email: user.email, name: user.name, role: user.role || "", familyId: user.familyId, familyCode },
+    user: {
+      email: normalizedUser.email,
+      name: normalizedUser.name,
+      role: normalizedUser.role || "",
+      familyId: normalizedUser.familyId,
+      familyCode,
+    },
   });
 }));
 
@@ -302,11 +348,21 @@ app.get("/api/me", asyncRoute(async (req, res) => {
   const users = await col("users");
   const user = await users.findOne(
     { _id: session.userId },
-    { projection: { _id: 0, email: 1, name: 1, role: 1, familyId: 1 } },
+    { projection: { email: 1, name: 1, role: 1, familyId: 1 } },
   );
   if (!user) throw httpError("사용자를 찾을 수 없습니다", 401);
-  const familyCode = await getFamilyCode(user.familyId);
-  json(res, { ok: true, user: { ...user, familyCode } });
+  const normalizedUser = await ensureUserFamily(user);
+  const familyCode = normalizedUser.familyCode || await getFamilyCode(normalizedUser.familyId);
+  json(res, {
+    ok: true,
+    user: {
+      email: normalizedUser.email,
+      name: normalizedUser.name,
+      role: normalizedUser.role || "",
+      familyId: normalizedUser.familyId,
+      familyCode,
+    },
+  });
 }));
 
 app.post("/api/logout", asyncRoute(async (req, res) => {
@@ -322,8 +378,9 @@ app.post("/api/logout", asyncRoute(async (req, res) => {
 app.post("/api/profile", asyncRoute(async (req, res) => {
   const session = await requireSession(req);
   const users = await col("users");
-  const user = await users.findOne({ _id: session.userId });
+  let user = await users.findOne({ _id: session.userId });
   if (!user) throw httpError("사용자를 찾을 수 없습니다", 401);
+  user = await ensureUserFamily(user);
 
   const updates = {};
   const name = String(req.body?.name || "").trim().slice(0, 30);
@@ -332,6 +389,17 @@ app.post("/api/profile", asyncRoute(async (req, res) => {
   if (role) {
     if (!["husband", "wife"].includes(role)) throw httpError("역할은 남편/아내 중에서 선택해 주세요", 400);
     updates.role = role;
+  }
+
+  const requestedFamilyCode = String(req.body?.familyCode || "").trim().toUpperCase();
+  if (requestedFamilyCode) {
+    const currentFamilyCode = await getFamilyCode(user.familyId);
+    if (requestedFamilyCode !== currentFamilyCode) {
+      const families = await col("families");
+      const family = await families.findOne({ code: requestedFamilyCode });
+      if (!family) throw httpError("가족 코드를 찾을 수 없습니다. 배우자의 코드를 다시 확인해 주세요", 404);
+      updates.familyId = family.familyId;
+    }
   }
 
   const newPassword = String(req.body?.newPassword || "");
@@ -348,15 +416,20 @@ app.post("/api/profile", asyncRoute(async (req, res) => {
   if (Object.keys(updates).length === 0) throw httpError("변경할 내용이 없습니다", 400);
   updates.updatedAt = new Date();
   await users.updateOne({ _id: user._id }, { $set: updates });
+  if (updates.familyId) {
+    const sessions = await col("sessions");
+    await sessions.updateMany({ userId: user._id }, { $set: { familyId: updates.familyId } });
+  }
 
-  const familyCode = await getFamilyCode(user.familyId);
+  const familyId = updates.familyId || user.familyId;
+  const familyCode = await getFamilyCode(familyId);
   json(res, {
     ok: true,
     user: {
       email: user.email,
       name: updates.name || user.name,
       role: updates.role || user.role || "",
-      familyId: user.familyId,
+      familyId,
       familyCode,
     },
   });

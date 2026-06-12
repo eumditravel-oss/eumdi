@@ -1,4 +1,5 @@
 :root{
+  --keyboard-inset:0px;
   --primary:#ff7686;
   --primary-light:#fff0f3;
   --primary-soft:#ffe7ec;
@@ -198,12 +199,19 @@ button,.nav-item,.tab,.chip,.week-badge,.task-item,.bn-item,.sheet-item{touch-ac
 .modal-divider{font-size:12px;font-weight:950;color:var(--text-muted);border-top:1px solid var(--line);padding-top:14px;margin-top:4px}
 .modal-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
 .modal-actions .btn{justify-content:center;min-height:44px}
+.family-connect-box{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid rgba(255,118,134,.18);background:var(--primary-light);border-radius:14px;padding:11px 12px}
+.family-connect-box span{display:block;font-size:11px;font-weight:900;color:var(--text-muted)}
+.family-connect-box b{display:block;font-size:18px;letter-spacing:.12em;color:var(--primary-hover);line-height:1.25}
 
 /* AI FAB */
 .ai-fab{position:fixed;right:16px;bottom:calc(20px + env(safe-area-inset-bottom));z-index:55;display:inline-flex;align-items:center;gap:7px;border:none;border-radius:999px;padding:14px 18px;background:linear-gradient(135deg,var(--primary),var(--accent-purple));color:#fff;font-weight:950;font-size:14px;box-shadow:0 10px 28px rgba(220,100,140,.45);transition:var(--transition)}
 .ai-fab svg{width:19px;height:19px}
 .ai-fab:active{transform:scale(.94)}
 @media(max-width:900px){.ai-fab{bottom:calc(76px + env(safe-area-inset-bottom))}}
+.message-fab{position:fixed;right:16px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:55;display:inline-flex;align-items:center;gap:7px;border:none;border-radius:999px;padding:12px 15px;background:#fff;color:var(--primary-hover);font-weight:950;font-size:13px;box-shadow:0 10px 26px rgba(130,100,110,.22);border:1px solid rgba(255,118,134,.22);transition:var(--transition)}
+.message-fab svg{width:18px;height:18px}
+.message-fab:active{transform:scale(.94)}
+@media(max-width:900px){.message-fab{bottom:calc(138px + env(safe-area-inset-bottom))}}
 
 /* AI 패널 */
 .ai-backdrop{position:fixed;inset:0;background:rgba(44,37,39,.42);z-index:96;opacity:0;pointer-events:none;transition:opacity .22s}
@@ -246,6 +254,32 @@ button,.nav-item,.tab,.chip,.week-badge,.task-item,.bn-item,.sheet-item{touch-ac
 .ai-send{border-radius:999px;width:46px;height:46px;padding:0;flex:0 0 46px}
 .ai-send svg{width:17px;height:17px}
 
+/* 모바일 전용 작업 화면 */
+.roadmap-mobile,.checklist-mobile,.compare-mobile{display:none}
+.mobile-stage-summary,.mobile-work-card,.mobile-edit-card{background:rgba(255,255,255,.86);border:1px solid var(--border-light);border-radius:18px;box-shadow:var(--shadow-md)}
+.mobile-stage-summary{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:13px 14px;margin-bottom:10px}
+.mobile-stage-summary span,.mobile-work-head small{display:block;font-size:10.5px;font-weight:950;color:var(--text-muted);margin-bottom:2px}
+.mobile-stage-summary b{display:block;font-size:16px;line-height:1.25}
+.mobile-stage-summary small{display:block;font-size:11.5px;color:var(--text-secondary);margin-top:3px;line-height:1.45}
+.mobile-stage-summary strong,.mobile-work-head span{border-radius:999px;background:var(--primary-light);color:var(--primary-hover);font-size:12px;font-weight:950;padding:6px 10px;white-space:nowrap}
+.mobile-stepper,.mobile-source-strip{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;margin:0 -2px;scroll-snap-type:x proximity}
+.step-pill,.source-pill{border:1px solid var(--border-light);background:rgba(255,255,255,.86);border-radius:999px;padding:9px 12px;font-weight:950;color:var(--text-secondary);white-space:nowrap;scroll-snap-align:start}
+.step-pill.active,.source-pill.active{border-color:transparent;background:linear-gradient(135deg,var(--primary),var(--accent-purple));color:#fff}
+.source-pill{display:inline-flex;align-items:center;gap:8px;max-width:220px}
+.source-pill span{overflow:hidden;text-overflow:ellipsis}
+.source-pill b{font-size:11px;background:rgba(0,0,0,.08);border-radius:999px;padding:1px 7px}
+.source-pill.active b{background:rgba(255,255,255,.22)}
+.mobile-work-card,.mobile-edit-card{padding:13px;margin-bottom:0}
+.mobile-work-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
+.mobile-work-head h3{font-size:16px;line-height:1.25;letter-spacing:-.25px}
+.segmented{display:grid;grid-template-columns:1fr 1fr;background:rgba(0,0,0,.045);border-radius:13px;padding:4px;margin-bottom:10px}
+.segmented button{border:none;background:none;border-radius:10px;padding:9px 4px;font-weight:950;color:var(--text-muted)}
+.segmented button.active{background:#fff;color:var(--primary-hover);box-shadow:var(--shadow-sm)}
+.mobile-field-list{display:grid;gap:10px}
+.mobile-field{display:grid;gap:5px}
+.mobile-field span{font-size:11px;font-weight:950;color:var(--text-muted)}
+.mobile-field input{min-height:42px}
+
 /* ═══════════ v3: 아이폰 가독성 추가 보정 ═══════════ */
 @media(max-width:900px){
   body{font-size:14px}
@@ -273,6 +307,18 @@ button,.nav-item,.tab,.chip,.week-badge,.task-item,.bn-item,.sheet-item{touch-ac
   .scroll-area{padding:14px 13px calc(150px + env(safe-area-inset-bottom))}
   .diary-card{padding:14px}
   .form-grid{gap:11px}
+  .roadmap-desktop,.checklist-desktop,.compare-desktop{display:none!important}
+  .roadmap-mobile,.checklist-mobile,.compare-mobile{display:block}
+  .checklist-filters{position:sticky;top:76px;z-index:8;padding:12px;background:rgba(255,255,255,.92);backdrop-filter:blur(12px)}
+  .checklist-filters .section-title{margin-bottom:9px}
+  .checklist-filters .form-grid{grid-template-columns:1fr 1fr;gap:8px}
+  .checklist-filters .field:nth-child(4){display:none}
+  .checklist-filters .field label{font-size:10.5px}
+  .checklist-filters .select{padding:9px 10px;border-radius:11px;font-size:14px}
+  .mobile-work-card{max-height:calc(100dvh - 312px);overflow:auto;-webkit-overflow-scrolling:touch}
+  .compare-mobile .mobile-edit-card{max-height:calc(100dvh - 235px);overflow:auto;-webkit-overflow-scrolling:touch}
+  .roadmap-mobile .mobile-work-card{max-height:calc(100dvh - 330px)}
+  .mobile-source-strip{padding-bottom:8px}
 }
 
 /* ═══════════ v4: 카톡형 대화방 ═══════════ */
@@ -338,4 +384,7 @@ button,.nav-item,.tab,.chip,.week-badge,.task-item,.bn-item,.sheet-item{touch-ac
   .info-body{font-size:12.5px;line-height:1.6}
   .week-tasks .section-title{font-size:14.5px;margin-bottom:9px}
   .scroll-area:has(.week-hero){padding-top:10px}
+  .ai-panel{bottom:var(--keyboard-inset);height:min(92dvh, calc(100dvh - var(--keyboard-inset) - 8px));max-height:calc(100dvh - var(--keyboard-inset) - 8px);transition:transform .28s cubic-bezier(.32,.72,.25,1),height .22s ease,bottom .22s ease}
+  .ai-log{min-height:0}
+  .ai-input-row{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
 }
