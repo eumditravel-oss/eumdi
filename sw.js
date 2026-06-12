@@ -23,7 +23,7 @@ self.addEventListener("activate", (event) => {
 });
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== "GET" || url.pathname.startsWith("/api/")) return; // API는 항상 서버로
+  if (event.request.method !== "GET" || url.pathname.startsWith("/api/") || url.pathname === "/src/config.js") return; // API와 공개 설정은 항상 서버로
   event.respondWith(
     fetch(event.request)
       .then((response) => {

@@ -1,0 +1,1 @@
+window.MOMMYFLOW_API_BASE_URL = window.MOMMYFLOW_API_BASE_URL || "";

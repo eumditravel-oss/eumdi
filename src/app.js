@@ -1,9 +1,11 @@
 const DATA = window.MOMMYFLOW_DATA;
 const BACKUP_STORE_KEY = "mommyflow-integrated-v1";
 const TOKEN_KEY = "mommyflow-token";
-const LOAD_ENDPOINT = "/api/load";
-const SAVE_ENDPOINT = "/api/save";
-const HEALTH_ENDPOINT = "/api/health";
+const API_BASE_URL = String(window.MOMMYFLOW_API_BASE_URL || "").replace(/\/+$/, "");
+function apiEndpoint(path){ return `${API_BASE_URL}${path}`; }
+const LOAD_ENDPOINT = apiEndpoint("/api/load");
+const SAVE_ENDPOINT = apiEndpoint("/api/save");
+const HEALTH_ENDPOINT = apiEndpoint("/api/health");
 
 let authToken = "";
 let authUser = null;
@@ -585,7 +587,7 @@ function handleAuthExpired(){
 }
 async function logout(){
   if(!confirm("로그아웃할까요? 데이터는 서버에 안전하게 보관됩니다.")) return;
-  try{ await fetch("/api/logout",{method:"POST",headers:authHeaders()}); }catch(e){}
+  try{ await fetch(apiEndpoint("/api/logout"),{method:"POST",headers:authHeaders()}); }catch(e){}
   localStorage.removeItem(TOKEN_KEY);
   authToken=""; authUser=null; authError=""; authMode="login";
   state=createDefaultState();
@@ -639,7 +641,7 @@ async function submitAuth(form){
   }
   authBusy=true; authError=""; renderAuth();
   try{
-    const response=await fetch(authMode==="signup"?"/api/signup":"/api/login",{
+    const response=await fetch(apiEndpoint(authMode==="signup"?"/api/signup":"/api/login"),{
       method:"POST",
       headers:{ "content-type":"application/json" },
       body:JSON.stringify(payload),
@@ -669,7 +671,7 @@ async function boot(){
   if(!authToken){ renderAuth(); return; }
   renderSplash();
   try{
-    const response=await fetch("/api/me",{headers:authHeaders({accept:"application/json"}),cache:"no-store"});
+    const response=await fetch(apiEndpoint("/api/me"),{headers:authHeaders({accept:"application/json"}),cache:"no-store"});
     const data=await response.json().catch(()=>({}));
     if(!response.ok || data.ok===false) throw new Error(data.error||"세션 만료");
     authUser=data.user;

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: mommyflow-api
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: CORS_ORIGIN
+        value: https://eumdi.pages.dev
