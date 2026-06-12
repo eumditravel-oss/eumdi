@@ -26,20 +26,10 @@ function safeString(value) {
 }
 
 export function publicError(error) {
-  const reason = safeString(error?.reason);
-  const cause = safeString(error?.cause);
-  const parts = [
-    error?.name,
-    error?.code ? `code=${error.code}` : "",
-    safeString(error?.message || "Request failed"),
-    reason ? `reason=${reason}` : "",
-    cause ? `cause=${cause}` : "",
-  ].filter(Boolean);
-
-  return parts
-    .join(" | ")
+  const name = error?.name ? `${error.name}: ` : "";
+  return `${name}${safeString(error?.message || "Request failed")}`
     .replace(/mongodb(\+srv)?:\/\/[^@\s]+@/gi, "mongodb$1://***@")
-    .slice(0, 600);
+    .slice(0, 220);
 }
 
 export function httpError(message, status) {

@@ -29,20 +29,10 @@ function safeString(value) {
 }
 
 function publicError(error) {
-  const reason = safeString(error?.reason);
-  const cause = safeString(error?.cause);
-  const parts = [
-    error?.name,
-    error?.code ? `code=${error.code}` : "",
-    safeString(error?.message || "MongoDB health check failed"),
-    reason ? `reason=${reason}` : "",
-    cause ? `cause=${cause}` : "",
-  ].filter(Boolean);
-
-  return parts
-    .join(" | ")
+  const name = error?.name ? `${error.name}: ` : "";
+  return `${name}${safeString(error?.message || "MongoDB health check failed")}`
     .replace(/mongodb(\+srv)?:\/\/[^@\s]+@/gi, "mongodb$1://***@")
-    .slice(0, 600);
+    .slice(0, 220);
 }
 
 async function getClient(env) {
