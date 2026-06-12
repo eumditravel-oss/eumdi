@@ -13,10 +13,33 @@ export function json(data, init = {}) {
   });
 }
 
+function safeString(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (value.message) return value.message;
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 export function publicError(error) {
-  return String(error?.message || "Request failed")
+  const reason = safeString(error?.reason);
+  const cause = safeString(error?.cause);
+  const parts = [
+    error?.name,
+    error?.code ? `code=${error.code}` : "",
+    safeString(error?.message || "Request failed"),
+    reason ? `reason=${reason}` : "",
+    cause ? `cause=${cause}` : "",
+  ].filter(Boolean);
+
+  return parts
+    .join(" | ")
     .replace(/mongodb(\+srv)?:\/\/[^@\s]+@/gi, "mongodb$1://***@")
-    .slice(0, 300);
+    .slice(0, 600);
 }
 
 export function httpError(message, status) {
@@ -31,7 +54,8 @@ export async function getDb(env) {
     const client = new MongoClient(env.MONGODB_URI, {
       appName: "mommyflow-cloudflare-pages",
       maxPoolSize: 1,
-      serverSelectionTimeoutMS: 8000,
+      connectTimeoutMS: 15000,
+      serverSelectionTimeoutMS: 30000,
       serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
     });
     clientPromise = client.connect();
