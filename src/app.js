@@ -55,6 +55,7 @@ const VIEWS = [
   ["family", "users", "가족 정보", "비상연락망"],
 ];
 const CATEGORY_LABEL = Object.fromEntries(DATA.planner.baseCategories.map(c => [c.id, c.name]));
+const CHECKLIST_CATEGORIES = ["임신 준비", "임신 초기", "임신 중기", "임신 후기", "출산 직후", "준비물", "행정/지원금"];
 
 const DEFAULT_BUDGET_EXPENSES = [
   ["산전 진료·검사 본인부담", 500000],
@@ -288,34 +289,109 @@ function currentRoadmapStage(){
   return DATA.standalone.STAGES.find(s=>s.day && p.days >= s.day[0] && p.days < s.day[1]) || DATA.standalone.STAGES.at(-1);
 }
 
+function weekChecklistCategory(week){
+  if(week < 4) return "임신 준비";
+  if(week <= 12) return "임신 초기";
+  if(week <= 27) return "임신 중기";
+  return "임신 후기";
+}
+function stageChecklistCategory(stageId){
+  const stage = DATA.planner.stages.find(s=>s.id===stageId);
+  if(stage?.phase === "임신 초기") return "임신 초기";
+  if(stage?.phase === "임신 중기") return "임신 중기";
+  if(stage?.phase === "임신 후기") return "임신 후기";
+  if(stage?.phase === "출산" || stage?.phase === "출산 후" || stageId?.startsWith("post-") || stageId==="birth-day") return "출산 직후";
+  return "임신 준비";
+}
+function broadChecklistCategory(task){
+  if(task.isPreparation || task.stageId==="s0") return "임신 준비";
+  if(task.view==="gear") return "준비물";
+  if(task.view==="subsidies") return "행정/지원금";
+  if(task.view==="timeline") return weekChecklistCategory(task.week || 0);
+  if(task.view==="roadmap"){
+    if(["지원금","서류"].includes(task.rawCategory)) return "행정/지원금";
+    if(["준비물","조리원","출산가방"].includes(task.rawCategory)) return "준비물";
+    const stage = DATA.standalone.STAGES.find(s=>s.id===task.stageId);
+    if(stage?.wk) return weekChecklistCategory(stage.wk[0]);
+    if(stage?.day) return "출산 직후";
+  }
+  if(task.view==="checklist"){
+    if(["admin","benefit"].includes(task.categoryId)) return "행정/지원금";
+    if(["supplies","carecenter"].includes(task.categoryId)) return "준비물";
+    return stageChecklistCategory(task.stageId);
+  }
+  return task.category || "임신 초기";
+}
+function prepareTaskId(item){
+  return item.legacyWeek ? `week-${item.legacyWeek}-${item.id}` : (item.id.startsWith("prep-") ? item.id : `prep-${item.id}`);
+}
+function legacyGearWhen(key){
+  if(key==="beforeBirth") return "32~36주: 출산가방 준비";
+  if(key==="postpartumCare") return "32~36주: 조리원 준비물 확정";
+  if(key==="afterBirth") return "출산 직후: 행정 처리";
+  return "";
+}
+function getGearDisplayGroups(){
+  const sourceGroups = DATA.standalone.GEAR_GROUPS || [];
+  const byId = new Map();
+  sourceGroups.forEach(group=>{
+    (group.list||[]).forEach(card=>byId.set(card.id, {...card, originalGroup:group.g}));
+  });
+  const categories = DATA.standalone.GEAR_CATEGORIES;
+  if(!categories?.length) return sourceGroups;
+  const timing = DATA.standalone.GEAR_CARD_TIMING || {};
+  return categories.map(group=>{
+    const list = [
+      ...(group.cardIds||[]).map(id=>byId.get(id)).filter(Boolean),
+      ...(group.cards||[]),
+    ].map(card=>({...card, when:card.when || timing[card.id] || group.when, displayGroup:group.name}));
+    return {g:group.name, icon:group.icon, when:group.when, list};
+  }).filter(group=>group.list.length);
+}
+
 function buildCatalog(){
   if(catalogCache) return catalogCache;
   const tasks=[];
+  (DATA.pregnancy.preparation?.checklist || []).forEach(item=>{
+    const task = {
+      id:prepareTaskId(item), title:item.text, note:DATA.pregnancy.preparation.description, category:"임신 준비", owner:"공동", priority:"", stage:"임신 준비", source:"임신 준비", view:"timeline", week:0, isPreparation:true
+    };
+    tasks.push(task);
+  });
   DATA.pregnancy.weeks.forEach(w=>{
-    w.checklist.forEach(item=>tasks.push({
-      id:`week-${w.week}-${item.id}`, title:item.text, note:`${w.week}주차 · ${w.title}`, category:"주차별", owner:"공동", priority:"", stage:`${w.week}주차`, source:"임신출산앱2 주차별", view:"timeline", week:w.week
-    }));
+    w.checklist.filter(item=>!item.deprecated && !item.movedToPrepare).forEach(item=>{
+      const task = {
+        id:`week-${w.week}-${item.id}`, title:item.text, note:`${w.week}주차 · ${w.title}`, category:weekChecklistCategory(w.week), owner:"공동", priority:"", stage:w.week < 4 ? "임신 확인 전 단계" : `${w.week}주차`, source:"임신 주차별", view:"timeline", week:w.week
+      };
+      tasks.push(task);
+    });
   });
   DATA.standalone.STAGES.forEach(stage=>{
     stage.sections.forEach((sec,si)=>{
       sec.items.forEach((it,ii)=>{
         const [title,note,label,priority,when,deadline,amount]=it;
-        tasks.push({ id:`road-${stage.id}-${si}-${ii}`, title, note, category:label||stage.name, owner:label==="남편"?"아빠":"공동", priority:priority===1?"필수":priority===2?"권장":"", stage:`${stage.name} · ${sec.name}`, source:"로드맵 상세", when, deadline, amount, view:"roadmap", stageId:stage.id });
+        const task = { id:`road-${stage.id}-${si}-${ii}`, title, note, category:"", rawCategory:label||stage.name, owner:label==="남편"?"아빠":"공동", priority:priority===1?"필수":priority===2?"권장":"", stage:`${stage.name} · ${sec.name}`, source:"로드맵 상세", when, deadline, amount, view:"roadmap", stageId:stage.id };
+        task.category = broadChecklistCategory(task);
+        tasks.push(task);
       });
     });
   });
   Object.entries(DATA.pregnancy.timelineStages).forEach(([key,stage])=>{
-    stage.checklist.forEach(item=>tasks.push({ id:`legacy-${key}-${item.id}`, title:item.text, note:stage.description, category:key==="beforeBirth"?"출산가방":key==="postpartumCare"?"조리원":"출산 후 행정", owner:"공동", priority:"", stage:stage.title, source:"임신출산앱2 고정 리스트", view:"gear" }));
+    stage.checklist.forEach(item=>tasks.push({ id:`legacy-${key}-${item.id}`, title:item.text, note:stage.description, category:key==="afterBirth"?"행정/지원금":"준비물", owner:"공동", priority:"", stage:stage.title, source:"출산 전후 고정 리스트", when:legacyGearWhen(key), view:"gear" }));
   });
-  DATA.standalone.GEAR_GROUPS.forEach(group=>{
+  getGearDisplayGroups().forEach(group=>{
     group.list.forEach(card=>{
-      card.items.forEach((it,ii)=>tasks.push({ id:`gear-${card.id}-${ii}`, title:it[0], note:it[1]||card.tip||group.g, category:"준비물", owner:card.name.includes("산모")?"엄마":"공동", priority:"", stage:`${group.g} · ${card.name}`, source:"준비물 상세", view:"gear" }));
+      card.items.forEach((it,ii)=>tasks.push({ id:`gear-${card.id}-${ii}`, title:it[0], note:it[1]||card.tip||group.g, category:"준비물", owner:card.name.includes("산모")?"엄마":"공동", priority:"", stage:`${group.g} · ${card.name}`, source:"준비물 · 출산가방", when:it[2]||card.when||group.when, view:"gear" }));
     });
   });
   DATA.pregnancy.subsidies.forEach(sub=>{
-    (sub.checklist||[]).forEach(item=>tasks.push({ id:`sub-${sub.id}-${item.id}`, title:item.text, note:`${sub.title} · ${sub.amount}`, category:"지원금", owner:"공동", priority:"", stage:sub.type==="local"?"성남시 자체":"국가 공통", source:"지원금 신청 프로세스", view:"subsidies" }));
+    (sub.checklist||[]).forEach(item=>tasks.push({ id:`sub-${sub.id}-${item.id}`, title:item.text, note:`${sub.title} · ${sub.amount}`, category:"행정/지원금", owner:"공동", priority:"", stage:sub.type==="local"?"성남시 자체":"국가 공통", source:"지원금 신청 프로세스", view:"subsidies" }));
   });
-  DATA.planner.tasks.forEach(t=>tasks.push({ id:`planner-${t.id}`, title:t.title, note:t.note, category:CATEGORY_LABEL[t.categoryId]||t.categoryId, owner:t.owner, priority:t.priority, stage:(DATA.planner.stages.find(s=>s.id===t.stageId)?.title)||t.stageId, source:"Eumdi Parent Planner", view:"checklist" }));
+  DATA.planner.tasks.forEach(t=>{
+    const task = { id:`planner-${t.id}`, title:t.title, note:t.note, category:"", detailCategory:CATEGORY_LABEL[t.categoryId]||t.categoryId, categoryId:t.categoryId, owner:t.owner, priority:t.priority, stage:(DATA.planner.stages.find(s=>s.id===t.stageId)?.title)||t.stageId, source:"Eumdi Parent Planner", view:"checklist", stageId:t.stageId };
+    task.category = broadChecklistCategory(task);
+    tasks.push(task);
+  });
   catalogCache = tasks;
   return tasks;
 }
@@ -331,7 +407,9 @@ function render(){
   const prevScroll=document.querySelector(".main-content")?.scrollTop ?? 0;
   const p=getPosition();
   const all=getTaskStats();
-  const currentWeek = DATA.pregnancy.weeks.find(w=>w.week===state.selectedWeek) || DATA.pregnancy.weeks.find(w=>w.week===p.week) || DATA.pregnancy.weeks[11];
+  const currentWeek = state.selectedWeek===0
+    ? {week:0, trimester:0, title:DATA.pregnancy.preparation?.title || "임신 준비", baby:"임신 확인 전 단계입니다.", mom:DATA.pregnancy.preparation?.description || "", tips:"배란일 예측과 기초체온은 임신 주차가 아니라 준비 단계에서 따로 관리합니다.", babyMessage:"임신을 준비하는 동안 부부가 함께 건강 루틴을 정리해 보세요. 🌿"}
+    : DATA.pregnancy.weeks.find(w=>w.week===state.selectedWeek) || DATA.pregnancy.weeks.find(w=>w.week===p.week) || DATA.pregnancy.weeks[11];
   app.innerHTML = `
   <div class="app-container ${state.mobileOpen?'side-open':''}">
     <div class="mobile-overlay" data-action="close-mobile"></div>
@@ -462,21 +540,21 @@ function renderDueCard(p){
   </div>`;
 }
 function navCount(id){
-  if(id==="timeline") return DATA.pregnancy.weeks.length;
+  if(id==="timeline") return DATA.pregnancy.weeks.length + (DATA.pregnancy.preparation ? 1 : 0);
   if(id==="roadmap") return DATA.standalone.STAGES.length;
   if(id==="checklist") return getTaskStats().total;
   if(id==="subsidies") return DATA.standalone.MONEY_GROUPS.reduce((a,g)=>a+g.list.length,0)+DATA.pregnancy.subsidies.length+DATA.planner.benefits.length;
-  if(id==="gear") return DATA.standalone.GEAR_GROUPS.reduce((a,g)=>a+g.list.reduce((b,c)=>b+c.items.length,0),0);
+  if(id==="gear") return getGearDisplayGroups().reduce((a,g)=>a+g.list.reduce((b,c)=>b+c.items.length,0),0);
   if(id==="diary") return state.diary.length;
   return "";
 }
 function viewTitle(){ return VIEWS.find(v=>v[0]===state.view)?.[2] || "MommyFlow"; }
 function viewSubtitle(p,w){
-  if(state.view==="timeline") return `${p.label} · ${w.title}`;
+  if(state.view==="timeline") return w.week===0 ? "임신 준비 · 임신 확인 전 단계" : `${p.label} · ${w.title}`;
   if(state.view==="roadmap") return "임신 확인 직후부터 산후 24개월까지 단계별 행동 로드맵";
   if(state.view==="checklist") { const s=getTaskStats(); return `총 ${s.total}개 항목 중 ${s.done}개 완료 (${s.pct}%)`; }
   if(state.view==="subsidies") return "국가 공통, 성남시 자체, 휴가·휴직, 생활 할인 혜택을 통합 정리";
-  if(state.view==="gear") return "출산가방, 산후조리원, 수유·수면·위생·이동 준비물";
+  if(state.view==="gear") return "산모 병원가방, 아기 퇴원가방, 조리원, 신생아 용품을 시기별로 정리";
   if(state.view==="diary") return "둘만의 대화방 · ☆를 누르면 대화가 저장돼요";
   if(state.view==="timeline") return "";
   return "브라우저에 자동 저장됩니다";
@@ -495,16 +573,19 @@ function renderTimeline(p, weekData){
   const s=getTaskStats(t=>t.view==="timeline" && t.week===weekData.week);
   const INFO_TABS=[["baby","👶 태아"],["mom","💜 엄마"],["tips","💡 팁"]];
   const tabKey=INFO_TABS.some(([k])=>k===infoTab)?infoTab:"baby";
+  const weekButtons = `${DATA.pregnancy.preparation?`<button class="week-badge prep ${weekData.week===0?'active':''}" data-action="select-week" data-week="0">준비</button>`:""}${DATA.pregnancy.weeks.map(w=>`<button class="week-badge ${w.week===weekData.week?'active':''} ${w.week===p.week?'current':''}" data-action="select-week" data-week="${w.week}">${w.week<4?`${w.week}주*`:`${w.week}주`}</button>`).join("")}`;
+  const heroLabel = weekData.week===0 ? weekData.title : `${state.family.babyNickname||"아기"}가 엄마에게 · ${weekData.week}주차 ${weekData.title}`;
   return `
     <div class="panel week-picker">
-      <div class="week-row" data-week-row>${DATA.pregnancy.weeks.map(w=>`<button class="week-badge ${w.week===weekData.week?'active':''} ${w.week===p.week?'current':''}" data-action="select-week" data-week="${w.week}">${w.week}주</button>`).join("")}</div>
+      <div class="week-row" data-week-row>${weekButtons}</div>
+      ${weekData.week>0 && weekData.week<4?`<p class="phase-note">* 1~3주는 의학적 주차 계산상 ‘임신 확인 전 단계’입니다. 임신 전 건강 준비는 ‘준비’에서 따로 확인하세요.</p>`:""}
     </div>
     <div class="panel week-hero">
-      <div class="hero-msg"><div class="baby-face">👶</div><div class="hero-msg-text"><small>${h(state.family.babyNickname||"아기")}가 엄마에게 · ${weekData.week}주차 ${h(weekData.title)}</small><p>“${h(weekData.babyMessage)}”</p></div></div>
+      <div class="hero-msg"><div class="baby-face">${weekData.week===0?"🌿":"👶"}</div><div class="hero-msg-text"><small>${h(heroLabel)}</small><p>“${h(weekData.babyMessage)}”</p></div></div>
       <div class="info-tabs">${INFO_TABS.map(([k,label])=>`<button class="info-tab ${tabKey===k?'active':''}" data-action="info-tab" data-tab="${k}">${label}</button>`).join("")}</div>
       <p class="info-body clamp" data-action="expand-info">${h(weekData[tabKey])}</p>
     </div>
-    <div class="panel week-tasks"><h2 class="section-title">${icon("list-checks")} 이번 주 체크 <span class="tag">${s.done}/${s.total}</span></h2>${renderTaskList(tasks.map(t=>({id:t.id,title:t.title})),{compact:true})}</div>`;
+    <div class="panel week-tasks"><h2 class="section-title">${icon("list-checks")} ${weekData.week===0?"준비 체크":"이번 주 체크"} <span class="tag">${s.done}/${s.total}</span></h2>${renderTaskList(tasks.map(t=>({id:t.id,title:t.title})),{compact:true})}</div>`;
 }
 function renderRoadmap(p){
   const cur=currentRoadmapStage();
@@ -540,28 +621,35 @@ function renderRoadmap(p){
   </div>`;
 }
 function renderChecklist(){
-  const categories=["all",...new Set(buildCatalog().map(t=>t.category))];
+  const categorySet=new Set(buildCatalog().map(t=>t.category));
+  const categories=["all",...CHECKLIST_CATEGORIES.filter(c=>categorySet.has(c)),...[...categorySet].filter(c=>!CHECKLIST_CATEGORIES.includes(c)).sort()];
+  const activeCategory=activeChecklistCategory();
   const owners=["all",...new Set(buildCatalog().map(t=>t.owner).filter(Boolean))];
   const filtered=filteredTasks();
-  const grouped=groupBy(filtered,t=>t.source);
-  const entries=Object.entries(grouped);
+  const grouped=groupBy(filtered,t=>t.category);
+  const entries=[...CHECKLIST_CATEGORIES.filter(c=>grouped[c]).map(c=>[c,grouped[c]]),...Object.entries(grouped).filter(([c])=>!CHECKLIST_CATEGORIES.includes(c))];
   const selectedSource=entries.some(([source])=>source===state.checklistSource) ? state.checklistSource : entries[0]?.[0] || "";
   const selectedList=grouped[selectedSource] || [];
-  return `<div class="panel checklist-filters"><h2 class="section-title">${icon("sliders-horizontal")} 필터</h2><div class="form-grid"><div class="field"><label>상태</label><select class="select" data-field="checklistStatus"><option value="all">전체</option><option value="active" ${state.checklistStatus==='active'?'selected':''}>진행 중</option><option value="done" ${state.checklistStatus==='done'?'selected':''}>완료</option></select></div><div class="field"><label>카테고리</label><select class="select" data-field="checklistCategory">${categories.map(c=>`<option value="${h(c)}" ${state.checklistCategory===c?'selected':''}>${c==='all'?'전체':h(c)}</option>`).join("")}</select></div><div class="field"><label>담당</label><select class="select" data-field="checklistOwner">${owners.map(o=>`<option value="${h(o)}" ${state.checklistOwner===o?'selected':''}>${o==='all'?'전체':h(o)}</option>`).join("")}</select></div><div class="field"><label>검색 결과</label><div class="input">${filtered.length}개 항목</div></div></div></div>
-  <div class="checklist-desktop">${filtered.length?entries.map(([source,list])=>`<div class="panel"><h2 class="section-title">${sourceTag(source)} ${h(source)} <span class="tag">${list.length}개</span></h2>${renderTaskList(list)}</div>`).join(""):`<div class="empty"><div class="big">🔎</div><p>조건에 맞는 체크리스트가 없습니다.</p></div>`}</div>
+  return `<div class="panel checklist-filters"><h2 class="section-title">${icon("sliders-horizontal")} 필터</h2><div class="form-grid"><div class="field"><label>상태</label><select class="select" data-field="checklistStatus"><option value="all">전체</option><option value="active" ${state.checklistStatus==='active'?'selected':''}>진행 중</option><option value="done" ${state.checklistStatus==='done'?'selected':''}>완료</option></select></div><div class="field"><label>카테고리</label><select class="select" data-field="checklistCategory">${categories.map(c=>`<option value="${h(c)}" ${activeCategory===c?'selected':''}>${c==='all'?'전체':h(c)}</option>`).join("")}</select></div><div class="field"><label>담당</label><select class="select" data-field="checklistOwner">${owners.map(o=>`<option value="${h(o)}" ${state.checklistOwner===o?'selected':''}>${o==='all'?'전체':h(o)}</option>`).join("")}</select></div><div class="field"><label>검색 결과</label><div class="input">${filtered.length}개 항목</div></div></div></div>
+  <div class="checklist-desktop">${filtered.length?entries.map(([source,list])=>`<div class="panel"><h2 class="section-title">${sourceTag(source)} ${h(source)} <span class="tag">${list.filter(t=>isDone(t.id)).length}/${list.length}</span></h2>${renderTaskList(list)}</div>`).join(""):`<div class="empty"><div class="big">🔎</div><p>조건에 맞는 체크리스트가 없습니다.</p></div>`}</div>
   <div class="checklist-mobile">
     ${entries.length?`<div class="mobile-source-strip">${entries.map(([source,list])=>`<button class="source-pill ${source===selectedSource?'active':''}" data-action="checklist-source" data-source="${h(source)}"><span>${h(source)}</span><b>${list.length}</b></button>`).join("")}</div>
     <div class="mobile-work-card"><div class="mobile-work-head"><div><small>선택한 묶음</small><h3>${h(selectedSource)}</h3></div><span>${selectedList.filter(t=>isDone(t.id)).length}/${selectedList.length}</span></div>${renderTaskList(selectedList,{compact:true})}</div>`:`<div class="empty"><div class="big">🔎</div><p>조건에 맞는 체크리스트가 없습니다.</p></div>`}
   </div>`;
 }
+function activeChecklistCategory(){
+  if(state.checklistCategory==="all") return "all";
+  return buildCatalog().some(t=>t.category===state.checklistCategory) ? state.checklistCategory : "all";
+}
 function filteredTasks(){
   const q=state.search.trim().toLowerCase();
+  const activeCategory=activeChecklistCategory();
   return buildCatalog().filter(t=>{
     if(state.checklistStatus==="active" && isDone(t.id)) return false;
     if(state.checklistStatus==="done" && !isDone(t.id)) return false;
-    if(state.checklistCategory!=="all" && t.category!==state.checklistCategory) return false;
+    if(activeCategory!=="all" && t.category!==activeCategory) return false;
     if(state.checklistOwner!=="all" && t.owner!==state.checklistOwner) return false;
-    if(q && !`${t.title} ${t.note} ${t.category} ${t.stage} ${t.source}`.toLowerCase().includes(q)) return false;
+    if(q && !`${t.title} ${t.note} ${t.category} ${t.detailCategory||""} ${t.rawCategory||""} ${t.stage} ${t.source}`.toLowerCase().includes(q)) return false;
     return true;
   });
 }
@@ -597,15 +685,15 @@ function renderSubsidyCard(c){
 }
 
 function renderGear(){
-  return `${DATA.standalone.GEAR_GROUPS.map(group=>`<div class="panel"><h2 class="section-title">${icon("package-check")} ${h(group.g)}</h2><div class="gear-grid">${group.list.map(card=>{
-    const list=card.items.map((it,ii)=>({id:`gear-${card.id}-${ii}`,title:it[0],note:it[1]||"",category:"준비물",stage:card.name,source:group.g}));
+  return `${getGearDisplayGroups().map(group=>`<div class="panel"><h2 class="section-title">${icon("package-check")} ${h(group.g)} ${group.when?`<span class="tag">📅 ${h(group.when)}</span>`:""}</h2><div class="gear-grid">${group.list.map(card=>{
+    const list=card.items.map((it,ii)=>({id:`gear-${card.id}-${ii}`,title:it[0],note:it[1]||card.tip||"",category:"준비물",stage:card.name,source:group.g,when:it[2]||card.when||group.when}));
     const done=list.filter(t=>isDone(t.id)).length;
     const fid=`gear-${card.id}`;
     const folded=isFolded(fid, true);
-    return `<article class="gear-card foldable ${folded?'folded':''}" data-fold-id="${fid}"><div class="gear-head fold-toggle" data-action="toggle-fold"><div class="round-icon">${card.icon||"🍼"}</div><div style="flex:1;min-width:0"><h3>${h(card.name)}</h3>${card.tip?`<p class="task-note">${h(stripHtml(card.tip))}</p>`:""}</div><span class="fold-meta">${done}/${list.length}<span class="fold-caret">${icon("chevron-down")}</span></span></div><div class="fold-body">${renderTaskList(list)}</div></article>`;
+    return `<article class="gear-card foldable ${folded?'folded':''}" data-fold-id="${fid}"><div class="gear-head fold-toggle" data-action="toggle-fold"><div class="round-icon">${card.icon||group.icon||"🍼"}</div><div style="flex:1;min-width:0"><h3>${h(card.name)}</h3>${card.when||group.when?`<span class="tag">📅 ${h(card.when||group.when)}</span>`:""}${card.tip?`<p class="task-note">${h(stripHtml(card.tip))}</p>`:""}</div><span class="fold-meta">${done}/${list.length}<span class="fold-caret">${icon("chevron-down")}</span></span></div><div class="fold-body">${renderTaskList(list)}</div></article>`;
   }).join("")}</div></div>`).join("")}
   ${Object.entries(DATA.pregnancy.timelineStages).map(([key,stage],gi)=>{
-    const list=stage.checklist.map(item=>({id:`legacy-${key}-${item.id}`,title:item.text,category:"출산/조리원",source:stage.title}));
+    const list=stage.checklist.map(item=>({id:`legacy-${key}-${item.id}`,title:item.text,category:key==="afterBirth"?"행정/지원금":"준비물",source:stage.title,when:legacyGearWhen(key)}));
     const done=list.filter(t=>isDone(t.id)).length;
     const fid=`legacy-${key}`;
     const folded=isFolded(fid, true);
@@ -967,7 +1055,12 @@ app.addEventListener("click", e=>{
   if(a==="auth-mode"){authMode=btn.dataset.mode;authError="";renderAuth();}
   if(a==="load-cloud"){state.moreOpen=false;loadRemoteState({force:true});}
   if(a==="health-check"){runHealthCheck();}
-  if(a==="select-week"){state.selectedWeek=Number(btn.dataset.week); state.selectedTrimester=DATA.pregnancy.weeks.find(w=>w.week===state.selectedWeek).trimester; saveState(); render();}
+  if(a==="select-week"){
+    state.selectedWeek=Number(btn.dataset.week);
+    const selected=DATA.pregnancy.weeks.find(w=>w.week===state.selectedWeek);
+    state.selectedTrimester=selected?.trimester || state.selectedTrimester || 1;
+    saveState(); render();
+  }
   if(a==="select-stage"){state.selectedStageId=btn.dataset.stage; state.roadmapSectionIndex=0; saveState(); render();}
   if(a==="toggle"){toggleCheck(btn.dataset.id);}
   if(a==="subsidy-filter"){state.subsidyFilter=btn.dataset.filter; saveState(); render();}

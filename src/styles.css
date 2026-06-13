@@ -51,6 +51,10 @@ button,input,select,textarea{font:inherit;color:inherit}button{cursor:pointer}a{
 @media(max-width:900px){.sidebar{position:fixed;top:0;bottom:0;left:0;transform:translateX(-105%);transition:transform .25s ease}.app-container.side-open .sidebar{transform:translateX(0)}.app-container.side-open .mobile-overlay{display:block}.mobile-menu{display:inline-flex}.content-header{padding:14px 16px}.scroll-area{padding:20px 16px 70px}.header-left h1{font-size:20px}.form-grid,.grid-2,.total-box{grid-template-columns:1fr}.budget-row{grid-template-columns:1fr}.task-item{grid-template-columns:28px 1fr}.task-actions{grid-column:2}.sidebar{width:min(320px,88vw);min-width:0}}
 @media(max-width:560px){body{font-size:13px}.metric-card{padding:13px}.grid-4{grid-template-columns:1fr}.baby-message{align-items:flex-start}.content-header{position:relative}.main-content{height:100vh}.scroll-area{padding-bottom:110px}}
 
+.week-badge.prep{width:auto;min-width:62px;padding:0 13px;background:rgba(232,245,232,.9);color:#3f6f44}
+.week-badge.prep.active{background:linear-gradient(135deg,#6fa86f,var(--accent-sage));color:#fff}
+.phase-note{font-size:12px;color:var(--text-secondary);font-weight:800;margin-top:2px;line-height:1.55}
+
 /* ═══════════════ 앱 셸 · iOS 최적화 ═══════════════ */
 html{-webkit-text-size-adjust:100%}
 body{-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
